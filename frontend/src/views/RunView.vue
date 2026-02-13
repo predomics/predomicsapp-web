@@ -7,11 +7,17 @@
       <section class="section">
         <h3>Data</h3>
         <div class="form-row">
-          <label>X dataset ID:
-            <input v-model="form.x_dataset_id" required placeholder="e.g., a1b2c3d4" />
+          <label>X (features):
+            <select v-model="form.x_dataset_id" required>
+              <option value="" disabled>Select X dataset</option>
+              <option v-for="d in datasets" :key="d.id" :value="d.id">{{ d.filename }}</option>
+            </select>
           </label>
-          <label>y dataset ID:
-            <input v-model="form.y_dataset_id" required placeholder="e.g., e5f6g7h8" />
+          <label>y (labels):
+            <select v-model="form.y_dataset_id" required>
+              <option value="" disabled>Select y dataset</option>
+              <option v-for="d in datasets" :key="d.id" :value="d.id">{{ d.filename }}</option>
+            </select>
           </label>
         </div>
         <div class="form-row">
@@ -100,13 +106,14 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 
 const route = useRoute()
 const launching = ref(false)
 const jobId = ref(null)
+const datasets = ref([])
 
 const form = reactive({
   x_dataset_id: '',
@@ -141,6 +148,24 @@ const form = reactive({
     cv: { outer_folds: 5, inner_folds: 5, overfit_penalty: 0 },
   },
 })
+
+async function fetchDatasets() {
+  try {
+    const { data } = await axios.get(`/api/projects/${route.params.id}`)
+    datasets.value = data.datasets || []
+    // Auto-select X and Y by filename pattern
+    const xDs = datasets.value.find(d => /^X/i.test(d.filename) && /train/i.test(d.filename))
+      || datasets.value.find(d => /^X/i.test(d.filename))
+    const yDs = datasets.value.find(d => /^Y/i.test(d.filename) && /train/i.test(d.filename))
+      || datasets.value.find(d => /^Y/i.test(d.filename))
+    if (xDs) form.x_dataset_id = xDs.id
+    if (yDs) form.y_dataset_id = yDs.id
+  } catch (e) {
+    console.error('Failed to load datasets:', e)
+  }
+}
+
+onMounted(fetchDatasets)
 
 async function launch() {
   launching.value = true
