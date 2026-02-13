@@ -9,7 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .core.config import settings
-from .routers import health, projects, analysis
+from .core.database import engine, Base
+from .models import db_models  # noqa: F401 — ensure models are registered
+from .routers import health, projects, analysis, auth
 from .services.storage import ensure_dirs
 
 logging.basicConfig(
@@ -22,6 +24,9 @@ logging.basicConfig(
 async def lifespan(app: FastAPI):
     """Startup/shutdown events."""
     ensure_dirs()
+    # Create database tables (for dev; use Alembic migrations in production)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     logging.getLogger(__name__).info(
         "PredomicsApp started — data_dir=%s", settings.data_dir
     )
@@ -46,6 +51,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(health.router)
+app.include_router(auth.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(analysis.router, prefix="/api")
 

@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     default_max_epochs: int = 100
     default_thread_number: int = 4
 
+    # Database
+    database_url: str = "postgresql+asyncpg://predomics:predomics@localhost:5432/predomics"
+
+    # JWT authentication
+    secret_key: str = "CHANGE-ME-IN-PRODUCTION"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 1440  # 24 hours
+
     # CORS (for Vue.js dev server)
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
