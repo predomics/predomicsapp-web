@@ -52,7 +52,10 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import axios from 'axios'
+
+const router = useRouter()
 
 const projects = ref([])
 const newName = ref('')
@@ -84,8 +87,8 @@ async function fetchSamples() {
 async function loadSample(sampleId) {
   loadingSample.value = true
   try {
-    await axios.post(`/api/samples/${sampleId}/load`)
-    await fetchProjects()
+    const { data } = await axios.post(`/api/samples/${sampleId}/load`)
+    router.push(`/project/${data.project_id}`)
   } catch (e) {
     console.error('Failed to load sample:', e)
   } finally {
