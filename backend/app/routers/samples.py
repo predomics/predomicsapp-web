@@ -6,7 +6,9 @@ import io
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from ..core.config import settings
 from ..core.database import get_db
@@ -55,7 +57,11 @@ async def load_sample(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a project and load a sample dataset into it for the current user."""
+    """Create a project and load a sample dataset into it for the current user.
+
+    If the user already has a project loaded from this sample, return the
+    existing project instead of creating a duplicate.
+    """
     if sample_id not in SAMPLE_DATASETS:
         raise HTTPException(status_code=404, detail="Sample dataset not found")
 
@@ -64,6 +70,25 @@ async def load_sample(
 
     if not sample_dir.exists():
         raise HTTPException(status_code=404, detail="Sample data files not found on disk")
+
+    # Check if user already has a project from this sample
+    existing = await db.execute(
+        select(Project)
+        .where(Project.user_id == user.id, Project.name == sample["name"])
+        .options(selectinload(Project.datasets), selectinload(Project.jobs))
+    )
+    existing_project = existing.scalars().first()
+    if existing_project:
+        return ProjectInfo(
+            project_id=existing_project.id,
+            name=existing_project.name,
+            created_at=existing_project.created_at.isoformat(),
+            datasets=[
+                DatasetRef(id=d.id, filename=d.filename, path=d.disk_path)
+                for d in existing_project.datasets
+            ],
+            jobs=[],
+        )
 
     # Create project
     project = Project(name=sample["name"], user_id=user.id)
