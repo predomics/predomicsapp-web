@@ -75,7 +75,7 @@ def clean_data():
     """Clean data directory between tests."""
     yield
     data_dir = os.environ["PREDOMICS_DATA_DIR"]
-    for d in ["projects", "uploads"]:
+    for d in ["projects", "uploads", "datasets"]:
         p = os.path.join(data_dir, d)
         if os.path.exists(p):
             shutil.rmtree(p)
@@ -87,7 +87,7 @@ def clean_data():
 # ---------------------------------------------------------------------------
 
 async def _create_project_with_datasets(auth_client):
-    """Create a project with X and y datasets, return (project_id, x_id, y_id)."""
+    """Create a project with X and y datasets, return (project_id, x_file_id, y_file_id)."""
     create_resp = await auth_client.post("/api/projects/", params={"name": "test_proj"})
     pid = create_resp.json()["project_id"]
 
@@ -102,12 +102,13 @@ async def _create_project_with_datasets(auth_client):
 
     proj = (await auth_client.get(f"/api/projects/{pid}")).json()
     datasets = proj["datasets"]
-    x_id = datasets[0]["id"]
-    y_id = datasets[1]["id"]
-    return pid, x_id, y_id
+    # Each upload creates a one-file dataset group; extract file IDs
+    x_file_id = datasets[0]["files"][0]["id"]
+    y_file_id = datasets[1]["files"][0]["id"]
+    return pid, x_file_id, y_file_id
 
 
-async def _run_mock_analysis(auth_client, pid, x_id, y_id):
+async def _run_mock_analysis(auth_client, pid, x_file_id, y_file_id):
     """Run a mock analysis job, return the job_id."""
     config = {
         "general": {"algo": "ga", "language": "bin", "data_type": "raw", "fit": "auc",
@@ -119,7 +120,7 @@ async def _run_mock_analysis(auth_client, pid, x_id, y_id):
         resp = await auth_client.post(
             f"/api/analysis/{pid}/run",
             json=config,
-            params={"x_dataset_id": x_id, "y_dataset_id": y_id},
+            params={"x_file_id": x_file_id, "y_file_id": y_file_id},
         )
     return resp.json()["job_id"]
 
@@ -316,7 +317,9 @@ class TestDatasets:
         resp = await auth_client.get(f"/api/projects/{pid}")
         datasets = resp.json()["datasets"]
         assert len(datasets) == 1
-        assert datasets[0]["filename"] == "X.tsv"
+        assert datasets[0]["name"] == "X.tsv"
+        assert len(datasets[0]["files"]) == 1
+        assert datasets[0]["files"][0]["filename"] == "X.tsv"
 
     @pytest.mark.asyncio
     async def test_upload_multiple_datasets(self, auth_client):
@@ -445,7 +448,7 @@ class TestAnalysis:
         resp = await auth_client.post(
             f"/api/analysis/{pid}/run",
             json={},
-            params={"x_dataset_id": "nonexistent", "y_dataset_id": "nonexistent"},
+            params={"x_file_id": "nonexistent", "y_file_id": "nonexistent"},
         )
         assert resp.status_code == 404
 
@@ -464,7 +467,7 @@ class TestSchemaValidation:
         resp = await auth_client.post(
             f"/api/analysis/{pid}/run",
             json=config,
-            params={"x_dataset_id": "abc", "y_dataset_id": "def"},
+            params={"x_file_id": "abc", "y_file_id": "def"},
         )
         assert resp.status_code == 422
 
@@ -477,7 +480,7 @@ class TestSchemaValidation:
         resp = await auth_client.post(
             f"/api/analysis/{pid}/run",
             json=config,
-            params={"x_dataset_id": "abc", "y_dataset_id": "def"},
+            params={"x_file_id": "abc", "y_file_id": "def"},
         )
         assert resp.status_code == 422
 
@@ -490,7 +493,7 @@ class TestSchemaValidation:
             resp = await auth_client.post(
                 f"/api/analysis/{pid}/run",
                 json={},
-                params={"x_dataset_id": x_id, "y_dataset_id": y_id},
+                params={"x_file_id": x_id, "y_file_id": y_id},
             )
         assert resp.status_code == 200
 
@@ -503,7 +506,7 @@ class TestSchemaValidation:
             resp = await auth_client.post(
                 f"/api/analysis/{pid}/run",
                 json=config,
-                params={"x_dataset_id": x_id, "y_dataset_id": y_id},
+                params={"x_file_id": x_id, "y_file_id": y_id},
             )
         assert resp.status_code == 200
 
@@ -516,7 +519,7 @@ class TestSchemaValidation:
             resp = await auth_client.post(
                 f"/api/analysis/{pid}/run",
                 json=config,
-                params={"x_dataset_id": x_id, "y_dataset_id": y_id},
+                params={"x_file_id": x_id, "y_file_id": y_id},
             )
         assert resp.status_code == 200
 
@@ -565,7 +568,9 @@ class TestSamples:
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "Qin2014 Liver Cirrhosis"
-        assert len(data["datasets"]) == 4
+        # One composite dataset with 4 files
+        assert len(data["datasets"]) == 1
+        assert len(data["datasets"][0]["files"]) == 4
 
     @pytest.mark.asyncio
     async def test_load_sample_twice_returns_same_project(self, auth_client):
@@ -764,3 +769,419 @@ class TestSecurity:
         from app.core.security import decode_access_token
         result = decode_access_token("garbage.token.value")
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# User Profile Management
+# ---------------------------------------------------------------------------
+
+class TestUserProfile:
+    @pytest.mark.asyncio
+    async def test_update_profile_name(self, auth_client):
+        resp = await auth_client.put("/api/auth/me", json={"full_name": "New Name"})
+        assert resp.status_code == 200
+        assert resp.json()["full_name"] == "New Name"
+
+        # Verify persisted
+        me = await auth_client.get("/api/auth/me")
+        assert me.json()["full_name"] == "New Name"
+
+    @pytest.mark.asyncio
+    async def test_update_profile_null_name_keeps_existing(self, auth_client):
+        resp = await auth_client.put("/api/auth/me", json={})
+        assert resp.status_code == 200
+        assert resp.json()["full_name"] == "Test User"  # unchanged
+
+    @pytest.mark.asyncio
+    async def test_change_password_success(self, auth_client):
+        resp = await auth_client.put("/api/auth/me/password", json={
+            "current_password": "testpass123",
+            "new_password": "newpass456",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "password_changed"
+
+        # Login with new password
+        resp = await auth_client.post("/api/auth/login", json={
+            "email": "test@example.com",
+            "password": "newpass456",
+        })
+        assert resp.status_code == 200
+        assert "access_token" in resp.json()
+
+    @pytest.mark.asyncio
+    async def test_change_password_wrong_current(self, auth_client):
+        resp = await auth_client.put("/api/auth/me/password", json={
+            "current_password": "wrongpass",
+            "new_password": "newpass456",
+        })
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_search_users_by_email(self, client):
+        # Register multiple users
+        await client.post("/api/auth/register", json={"email": "alice@example.com", "password": "p", "full_name": "Alice"})
+        await client.post("/api/auth/register", json={"email": "bob@example.com", "password": "p", "full_name": "Bob"})
+        await client.post("/api/auth/register", json={"email": "alice2@example.com", "password": "p", "full_name": "Alice2"})
+
+        # Login as bob
+        r = await client.post("/api/auth/login", json={"email": "bob@example.com", "password": "p"})
+        token = r.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Search for "alice" — should find 2 results, not bob
+        resp = await client.get("/api/auth/users/search", params={"q": "alice"}, headers=headers)
+        assert resp.status_code == 200
+        results = resp.json()
+        assert len(results) == 2
+        emails = {u["email"] for u in results}
+        assert "alice@example.com" in emails
+        assert "alice2@example.com" in emails
+        assert "bob@example.com" not in emails
+
+    @pytest.mark.asyncio
+    async def test_search_users_excludes_self(self, auth_client):
+        # auth_client is test@example.com — searching for "test" should not return self
+        resp = await auth_client.get("/api/auth/users/search", params={"q": "test"})
+        assert resp.status_code == 200
+        emails = {u["email"] for u in resp.json()}
+        assert "test@example.com" not in emails
+
+    @pytest.mark.asyncio
+    async def test_search_users_min_query_length(self, auth_client):
+        resp = await auth_client.get("/api/auth/users/search", params={"q": "a"})
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
+# Dataset Library
+# ---------------------------------------------------------------------------
+
+class TestDatasetLibrary:
+    @pytest.mark.asyncio
+    async def test_create_dataset_group(self, auth_client):
+        resp = await auth_client.post(
+            "/api/datasets/", params={"name": "My Dataset"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "My Dataset"
+        assert data["project_count"] == 0
+        assert data["files"] == []
+
+    @pytest.mark.asyncio
+    async def test_upload_file_to_dataset(self, auth_client):
+        # Create group
+        ds_resp = await auth_client.post("/api/datasets/", params={"name": "Test DS"})
+        ds_id = ds_resp.json()["id"]
+
+        # Upload file into group
+        resp = await auth_client.post(
+            f"/api/datasets/{ds_id}/files",
+            files={"file": ("Xtrain.tsv", b"id\ts1\nf1\t0.1\n", "text/plain")},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["filename"] == "Xtrain.tsv"
+        assert resp.json()["role"] == "xtrain"
+
+    @pytest.mark.asyncio
+    async def test_list_datasets(self, auth_client):
+        await auth_client.post("/api/datasets/", params={"name": "DS A"})
+        await auth_client.post("/api/datasets/", params={"name": "DS B"})
+        resp = await auth_client.get("/api/datasets/")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 2
+
+    @pytest.mark.asyncio
+    async def test_delete_dataset(self, auth_client):
+        resp = await auth_client.post("/api/datasets/", params={"name": "To Delete"})
+        ds_id = resp.json()["id"]
+        resp = await auth_client.delete(f"/api/datasets/{ds_id}")
+        assert resp.status_code == 200
+        resp = await auth_client.get("/api/datasets/")
+        assert len(resp.json()) == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_file_from_dataset(self, auth_client):
+        ds_resp = await auth_client.post("/api/datasets/", params={"name": "File Del"})
+        ds_id = ds_resp.json()["id"]
+        file_resp = await auth_client.post(
+            f"/api/datasets/{ds_id}/files",
+            files={"file": ("X.tsv", b"id\ts1\nf1\t0.1\n", "text/plain")},
+        )
+        file_id = file_resp.json()["id"]
+
+        resp = await auth_client.delete(f"/api/datasets/{ds_id}/files/{file_id}")
+        assert resp.status_code == 200
+
+        # Dataset group still exists but has no files
+        ds = (await auth_client.get(f"/api/datasets/{ds_id}")).json()
+        assert len(ds["files"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_assign_dataset_to_project(self, auth_client):
+        # Create dataset group with a file
+        ds_resp = await auth_client.post("/api/datasets/", params={"name": "Xtrain Set"})
+        ds_id = ds_resp.json()["id"]
+        await auth_client.post(
+            f"/api/datasets/{ds_id}/files",
+            files={"file": ("Xtrain.tsv", b"id\ts1\nf1\t0.1\n", "text/plain")},
+        )
+
+        # Create project
+        proj_resp = await auth_client.post("/api/projects/", params={"name": "assign_test"})
+        pid = proj_resp.json()["project_id"]
+
+        # Assign
+        resp = await auth_client.post(f"/api/datasets/{ds_id}/assign/{pid}")
+        assert resp.status_code == 200
+
+        # Project should show the dataset with its files
+        proj = (await auth_client.get(f"/api/projects/{pid}")).json()
+        assert len(proj["datasets"]) == 1
+        assert proj["datasets"][0]["name"] == "Xtrain Set"
+        assert len(proj["datasets"][0]["files"]) == 1
+        assert proj["datasets"][0]["files"][0]["role"] == "xtrain"
+
+    @pytest.mark.asyncio
+    async def test_unassign_dataset_from_project(self, auth_client):
+        ds_resp = await auth_client.post("/api/datasets/", params={"name": "Unassign DS"})
+        ds_id = ds_resp.json()["id"]
+        proj_resp = await auth_client.post("/api/projects/", params={"name": "unassign_test"})
+        pid = proj_resp.json()["project_id"]
+
+        await auth_client.post(f"/api/datasets/{ds_id}/assign/{pid}")
+        resp = await auth_client.delete(f"/api/datasets/{ds_id}/assign/{pid}")
+        assert resp.status_code == 200
+
+        proj = (await auth_client.get(f"/api/projects/{pid}")).json()
+        assert len(proj["datasets"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_dataset_shared_across_projects(self, auth_client):
+        """One dataset can be assigned to multiple projects."""
+        ds_resp = await auth_client.post("/api/datasets/", params={"name": "Shared DS"})
+        ds_id = ds_resp.json()["id"]
+
+        p1 = (await auth_client.post("/api/projects/", params={"name": "p1"})).json()["project_id"]
+        p2 = (await auth_client.post("/api/projects/", params={"name": "p2"})).json()["project_id"]
+
+        await auth_client.post(f"/api/datasets/{ds_id}/assign/{p1}")
+        await auth_client.post(f"/api/datasets/{ds_id}/assign/{p2}")
+
+        # Dataset should report project_count = 2
+        ds_detail = (await auth_client.get(f"/api/datasets/{ds_id}")).json()
+        assert ds_detail["project_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_delete_project_keeps_datasets(self, auth_client):
+        """Deleting a project should NOT delete the user's datasets."""
+        ds_resp = await auth_client.post("/api/datasets/", params={"name": "Keep Me"})
+        ds_id = ds_resp.json()["id"]
+
+        proj_resp = await auth_client.post("/api/projects/", params={"name": "temp_proj"})
+        pid = proj_resp.json()["project_id"]
+
+        await auth_client.post(f"/api/datasets/{ds_id}/assign/{pid}")
+        await auth_client.delete(f"/api/projects/{pid}")
+
+        # Dataset should still exist in library
+        resp = await auth_client.get(f"/api/datasets/{ds_id}")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Keep Me"
+
+    @pytest.mark.asyncio
+    async def test_backward_compat_project_upload_creates_library_entry(self, auth_client):
+        """POST /projects/{pid}/datasets should also create a library entry."""
+        proj_resp = await auth_client.post("/api/projects/", params={"name": "compat_test"})
+        pid = proj_resp.json()["project_id"]
+
+        await auth_client.post(
+            f"/api/projects/{pid}/datasets",
+            files={"file": ("X.tsv", b"id\ts1\nf1\t0.1\n", "text/plain")},
+        )
+
+        # Should appear in user's dataset library
+        library = (await auth_client.get("/api/datasets/")).json()
+        assert any(d["name"] == "X.tsv" for d in library)
+
+    @pytest.mark.asyncio
+    async def test_duplicate_assignment_returns_409(self, auth_client):
+        ds_resp = await auth_client.post("/api/datasets/", params={"name": "Dup DS"})
+        ds_id = ds_resp.json()["id"]
+        proj_resp = await auth_client.post("/api/projects/", params={"name": "dup_test"})
+        pid = proj_resp.json()["project_id"]
+
+        await auth_client.post(f"/api/datasets/{ds_id}/assign/{pid}")
+        resp = await auth_client.post(f"/api/datasets/{ds_id}/assign/{pid}")
+        assert resp.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_composite_dataset_with_multiple_files(self, auth_client):
+        """Create a composite dataset with 4 files like real Qin2014 data."""
+        ds_resp = await auth_client.post(
+            "/api/datasets/", params={"name": "Qin2014", "description": "Cirrhosis data"},
+        )
+        ds_id = ds_resp.json()["id"]
+
+        for fname in ["Xtrain.tsv", "Ytrain.tsv", "Xtest.tsv", "Ytest.tsv"]:
+            await auth_client.post(
+                f"/api/datasets/{ds_id}/files",
+                files={"file": (fname, b"id\ts1\nf1\t0.1\n", "text/plain")},
+            )
+
+        ds = (await auth_client.get(f"/api/datasets/{ds_id}")).json()
+        assert ds["name"] == "Qin2014"
+        assert ds["description"] == "Cirrhosis data"
+        assert len(ds["files"]) == 4
+
+        roles = {f["role"] for f in ds["files"]}
+        assert roles == {"xtrain", "ytrain", "xtest", "ytest"}
+
+
+# ---------------------------------------------------------------------------
+# Project Sharing
+# ---------------------------------------------------------------------------
+
+class TestProjectSharing:
+    @pytest.mark.asyncio
+    async def test_share_project_with_user(self, client):
+        """Owner shares project → target can see it."""
+        # Register two users
+        await client.post("/api/auth/register", json={"email": "owner@test.com", "password": "p", "full_name": "Owner"})
+        await client.post("/api/auth/register", json={"email": "viewer@test.com", "password": "p", "full_name": "Viewer"})
+
+        # Owner creates project
+        r = await client.post("/api/auth/login", json={"email": "owner@test.com", "password": "p"})
+        owner_token = r.json()["access_token"]
+        owner_h = {"Authorization": f"Bearer {owner_token}"}
+
+        proj = await client.post("/api/projects/", params={"name": "shared_proj"}, headers=owner_h)
+        pid = proj.json()["project_id"]
+
+        # Share with viewer
+        resp = await client.post(
+            f"/api/projects/{pid}/share",
+            json={"email": "viewer@test.com", "role": "viewer"},
+            headers=owner_h,
+        )
+        assert resp.status_code == 200
+
+        # Viewer logs in and can see shared project
+        r = await client.post("/api/auth/login", json={"email": "viewer@test.com", "password": "p"})
+        viewer_token = r.json()["access_token"]
+        viewer_h = {"Authorization": f"Bearer {viewer_token}"}
+
+        shared = await client.get("/api/projects/shared-with-me", headers=viewer_h)
+        assert len(shared.json()) == 1
+        assert shared.json()[0]["project_id"] == pid
+
+    @pytest.mark.asyncio
+    async def test_viewer_can_see_project(self, client):
+        """Viewer can GET /projects/{pid}."""
+        await client.post("/api/auth/register", json={"email": "own3@test.com", "password": "p"})
+        await client.post("/api/auth/register", json={"email": "view3@test.com", "password": "p"})
+
+        r = await client.post("/api/auth/login", json={"email": "own3@test.com", "password": "p"})
+        own_h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        pid = (await client.post("/api/projects/", params={"name": "viewable"}, headers=own_h)).json()["project_id"]
+
+        await client.post(f"/api/projects/{pid}/share", json={"email": "view3@test.com", "role": "viewer"}, headers=own_h)
+
+        r = await client.post("/api/auth/login", json={"email": "view3@test.com", "password": "p"})
+        view_h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+        resp = await client.get(f"/api/projects/{pid}", headers=view_h)
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "viewable"
+
+    @pytest.mark.asyncio
+    async def test_viewer_cannot_delete_project(self, client):
+        await client.post("/api/auth/register", json={"email": "own4@test.com", "password": "p"})
+        await client.post("/api/auth/register", json={"email": "view4@test.com", "password": "p"})
+
+        r = await client.post("/api/auth/login", json={"email": "own4@test.com", "password": "p"})
+        own_h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        pid = (await client.post("/api/projects/", params={"name": "nodelete"}, headers=own_h)).json()["project_id"]
+
+        await client.post(f"/api/projects/{pid}/share", json={"email": "view4@test.com", "role": "viewer"}, headers=own_h)
+
+        r = await client.post("/api/auth/login", json={"email": "view4@test.com", "password": "p"})
+        view_h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+        resp = await client.delete(f"/api/projects/{pid}", headers=view_h)
+        assert resp.status_code in (403, 404)
+
+    @pytest.mark.asyncio
+    async def test_editor_can_upload_dataset(self, client):
+        await client.post("/api/auth/register", json={"email": "own5@test.com", "password": "p"})
+        await client.post("/api/auth/register", json={"email": "edit5@test.com", "password": "p"})
+
+        r = await client.post("/api/auth/login", json={"email": "own5@test.com", "password": "p"})
+        own_h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        pid = (await client.post("/api/projects/", params={"name": "editable"}, headers=own_h)).json()["project_id"]
+
+        await client.post(f"/api/projects/{pid}/share", json={"email": "edit5@test.com", "role": "editor"}, headers=own_h)
+
+        r = await client.post("/api/auth/login", json={"email": "edit5@test.com", "password": "p"})
+        edit_h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+        resp = await client.post(
+            f"/api/projects/{pid}/datasets",
+            files={"file": ("X.tsv", b"id\ts1\nf1\t0.1\n", "text/plain")},
+            headers=edit_h,
+        )
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_viewer_cannot_upload_dataset(self, client):
+        await client.post("/api/auth/register", json={"email": "own6@test.com", "password": "p"})
+        await client.post("/api/auth/register", json={"email": "view6@test.com", "password": "p"})
+
+        r = await client.post("/api/auth/login", json={"email": "own6@test.com", "password": "p"})
+        own_h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        pid = (await client.post("/api/projects/", params={"name": "readonly"}, headers=own_h)).json()["project_id"]
+
+        await client.post(f"/api/projects/{pid}/share", json={"email": "view6@test.com", "role": "viewer"}, headers=own_h)
+
+        r = await client.post("/api/auth/login", json={"email": "view6@test.com", "password": "p"})
+        view_h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+        resp = await client.post(
+            f"/api/projects/{pid}/datasets",
+            files={"file": ("X.tsv", b"id\ts1\nf1\t0.1\n", "text/plain")},
+            headers=view_h,
+        )
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_revoke_share_removes_access(self, client):
+        await client.post("/api/auth/register", json={"email": "own7@test.com", "password": "p"})
+        await client.post("/api/auth/register", json={"email": "view7@test.com", "password": "p"})
+
+        r = await client.post("/api/auth/login", json={"email": "own7@test.com", "password": "p"})
+        own_h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        pid = (await client.post("/api/projects/", params={"name": "revokable"}, headers=own_h)).json()["project_id"]
+
+        # Share then revoke
+        share_resp = await client.post(f"/api/projects/{pid}/share", json={"email": "view7@test.com", "role": "viewer"}, headers=own_h)
+        share_id = share_resp.json()["id"]
+
+        await client.delete(f"/api/projects/{pid}/shares/{share_id}", headers=own_h)
+
+        # Viewer should no longer see the project
+        r = await client.post("/api/auth/login", json={"email": "view7@test.com", "password": "p"})
+        view_h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+        resp = await client.get(f"/api/projects/{pid}", headers=view_h)
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_cannot_share_with_self(self, auth_client):
+        pid = (await auth_client.post("/api/projects/", params={"name": "self_share"})).json()["project_id"]
+        resp = await auth_client.post(
+            f"/api/projects/{pid}/share",
+            json={"email": "test@example.com", "role": "viewer"},
+        )
+        assert resp.status_code == 400

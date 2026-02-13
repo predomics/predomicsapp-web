@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import io
-
-import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from ..core.config import settings
 from ..core.database import get_db
 from ..core.deps import get_current_user
-from ..models.db_models import User, Project, Dataset
-from ..models.schemas import ProjectInfo, DatasetRef
+from ..models.db_models import User, Project, Dataset, DatasetFile, ProjectDataset
+from ..models.schemas import ProjectInfo, DatasetRef, DatasetFileRef
 from ..services import storage
+from .datasets import _infer_role
 
 router = APIRouter(prefix="/samples", tags=["samples"])
 
@@ -72,23 +69,15 @@ async def load_sample(
         raise HTTPException(status_code=404, detail="Sample data files not found on disk")
 
     # Check if user already has a project from this sample
+    from .projects import _project_query_options, _build_project_info
     existing = await db.execute(
         select(Project)
         .where(Project.user_id == user.id, Project.name == sample["name"])
-        .options(selectinload(Project.datasets), selectinload(Project.jobs))
+        .options(*_project_query_options())
     )
     existing_project = existing.scalars().first()
     if existing_project:
-        return ProjectInfo(
-            project_id=existing_project.id,
-            name=existing_project.name,
-            created_at=existing_project.created_at.isoformat(),
-            datasets=[
-                DatasetRef(id=d.id, filename=d.filename, path=d.disk_path)
-                for d in existing_project.datasets
-            ],
-            jobs=[],
-        )
+        return _build_project_info(existing_project)
 
     # Create project
     project = Project(name=sample["name"], user_id=user.id)
@@ -96,28 +85,48 @@ async def load_sample(
     await db.flush()
     storage.ensure_project_dirs(project.id)
 
-    # Load each file
-    datasets = []
+    # Create ONE composite dataset group in user's library
+    dataset = Dataset(
+        name=sample["name"],
+        description=sample["description"],
+        user_id=user.id,
+    )
+    db.add(dataset)
+    await db.flush()
+
+    # Add each file to the dataset group
+    file_refs = []
     for file_info in sample["files"]:
         filepath = sample_dir / file_info["filename"]
         if not filepath.exists():
             continue
 
         content = filepath.read_bytes()
+        role = _infer_role(file_info["filename"])
 
-        dataset = Dataset(project_id=project.id, filename=file_info["filename"], disk_path="")
-        db.add(dataset)
+        ds_file = DatasetFile(
+            dataset_id=dataset.id,
+            filename=file_info["filename"],
+            role=role,
+            disk_path="",
+        )
+        db.add(ds_file)
         await db.flush()
 
-        disk_path = storage.save_dataset_file(project.id, dataset.id, file_info["filename"], content)
-        dataset.disk_path = disk_path
+        disk_path = storage.save_user_dataset_file(user.id, ds_file.id, file_info["filename"], content)
+        ds_file.disk_path = disk_path
 
-        datasets.append(DatasetRef(id=dataset.id, filename=file_info["filename"], path=disk_path))
+        file_refs.append(DatasetFileRef(id=ds_file.id, filename=ds_file.filename, role=ds_file.role))
+
+    # Single assignment to project
+    link = ProjectDataset(project_id=project.id, dataset_id=dataset.id)
+    db.add(link)
+    await db.flush()
 
     return ProjectInfo(
         project_id=project.id,
         name=project.name,
         created_at=project.created_at.isoformat(),
-        datasets=datasets,
+        datasets=[DatasetRef(id=dataset.id, name=dataset.name, files=file_refs)],
         jobs=[],
     )

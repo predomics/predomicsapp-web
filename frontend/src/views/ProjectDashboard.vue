@@ -6,11 +6,17 @@
         {{ project.datasets?.length || 0 }} datasets &middot;
         {{ project.jobs?.length || 0 }} jobs
       </div>
+      <button class="share-btn" @click="showShare = true">Share</button>
     </header>
 
+    <ShareModal
+      v-if="showShare"
+      :project-id="projectId"
+      @close="showShare = false"
+    />
+
     <nav class="tab-nav">
-      <router-link :to="`/project/${projectId}/data`" class="tab" active-class="active">Data</router-link>
-      <router-link :to="`/project/${projectId}/settings`" class="tab" active-class="active">Settings &amp; Run</router-link>
+      <router-link :to="`/project/${projectId}/settings`" class="tab" active-class="active">Data &amp; Run</router-link>
       <router-link :to="`/project/${projectId}/results`" class="tab" active-class="active">Results</router-link>
     </nav>
 
@@ -33,13 +39,15 @@
 </template>
 
 <script setup>
-import { computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useProjectStore } from '../stores/project'
 import ConsolePanel from '../components/ConsolePanel.vue'
+import ShareModal from '../components/ShareModal.vue'
 
 const route = useRoute()
 const store = useProjectStore()
+const showShare = ref(false)
 
 const projectId = computed(() => route.params.id)
 const project = computed(() => store.current)
@@ -51,7 +59,6 @@ async function loadProject() {
 }
 
 function onJobCompleted(jobId) {
-  // Refresh project to update job list
   loadProject()
 }
 
@@ -79,25 +86,42 @@ onMounted(loadProject)
 
 .project-header h2 {
   margin: 0;
-  color: #1a1a2e;
+  color: var(--text-primary);
 }
 
 .project-meta {
-  color: #90a4ae;
+  color: var(--text-faint);
   font-size: 0.85rem;
+}
+
+.share-btn {
+  margin-left: auto;
+  padding: 0.35rem 1rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.share-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .tab-nav {
   display: flex;
   gap: 0;
-  border-bottom: 2px solid #e0e0e0;
-  margin-bottom: 1.5rem;
+  border-bottom: 2px solid var(--border-light);
+  margin-bottom: 1rem;
 }
 
 .tab {
   padding: 0.75rem 1.5rem;
   text-decoration: none;
-  color: #78909c;
+  color: var(--text-muted);
   font-weight: 500;
   font-size: 0.9rem;
   border-bottom: 2px solid transparent;
@@ -106,23 +130,23 @@ onMounted(loadProject)
 }
 
 .tab:hover {
-  color: #1a1a2e;
+  color: var(--text-primary);
 }
 
 .tab.active {
-  color: #1a1a2e;
-  border-bottom-color: #1a1a2e;
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
 }
 
 .dashboard-body {
   display: grid;
   grid-template-columns: 1fr;
   gap: 0;
-  min-height: calc(100vh - 200px);
+  min-height: calc(100vh - 180px);
 }
 
 .dashboard-body.with-console {
-  grid-template-columns: 1fr 420px;
+  grid-template-columns: 1fr 600px;
 }
 
 .main-panel {
@@ -135,10 +159,10 @@ onMounted(loadProject)
 }
 
 .console-aside {
-  border-left: 1px solid #e0e0e0;
+  border-left: 1px solid var(--border-light);
   border-radius: 0 8px 8px 0;
   overflow: hidden;
-  height: calc(100vh - 200px);
+  height: calc(100vh - 180px);
   position: sticky;
   top: 80px;
 }
@@ -146,6 +170,6 @@ onMounted(loadProject)
 .loading {
   text-align: center;
   padding: 3rem;
-  color: #90a4ae;
+  color: var(--text-faint);
 }
 </style>

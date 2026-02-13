@@ -8,7 +8,15 @@ from ..core.database import get_db
 from ..core.security import hash_password, verify_password, create_access_token
 from ..core.deps import get_current_user
 from ..models.db_models import User
-from ..models.auth_schemas import RegisterRequest, LoginRequest, TokenResponse, UserResponse
+from ..models.auth_schemas import (
+    RegisterRequest,
+    LoginRequest,
+    TokenResponse,
+    UserResponse,
+    UserPublicResponse,
+    UpdateProfileRequest,
+    ChangePasswordRequest,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -48,3 +56,45 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 async def get_me(user: User = Depends(get_current_user)):
     """Return the currently authenticated user."""
     return user
+
+
+@router.put("/me", response_model=UserResponse)
+async def update_profile(
+    body: UpdateProfileRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the current user's profile."""
+    if body.full_name is not None:
+        user.full_name = body.full_name
+    return user
+
+
+@router.put("/me/password")
+async def change_password(
+    body: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Change the current user's password."""
+    if not verify_password(body.current_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    user.hashed_password = hash_password(body.new_password)
+    return {"status": "password_changed"}
+
+
+@router.get("/users/search", response_model=list[UserPublicResponse])
+async def search_users(
+    q: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search users by email prefix (for sharing UI)."""
+    if len(q) < 2:
+        return []
+    result = await db.execute(
+        select(User)
+        .where(User.email.ilike(f"{q}%"), User.id != user.id, User.is_active.is_(True))
+        .limit(10)
+    )
+    return result.scalars().all()

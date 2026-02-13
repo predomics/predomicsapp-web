@@ -179,9 +179,50 @@ def run_experiment(param_yaml_path: str) -> dict[str, Any]:
 
 def _mock_results() -> dict[str, Any]:
     """Return mock results when gpredomicspy is not available (development mode)."""
+    import random
+
+    rng = random.Random(42)
+    n_gens = 10
+
+    # Simulate realistic convergence curves for train and test
+    generation_tracking = []
+    train_auc = 0.55
+    test_auc = 0.52
+    for g in range(n_gens):
+        train_auc += rng.uniform(0.02, 0.05) * (1 - train_auc)
+        test_auc += rng.uniform(0.01, 0.04) * (1 - test_auc) + rng.uniform(-0.01, 0.01)
+        test_auc = min(test_auc, train_auc - 0.01)
+        generation_tracking.append({
+            "generation": g,
+            "best_auc": round(train_auc, 4),
+            "best_auc_test": round(max(0.5, test_auc), 4),
+            "best_fit": round(train_auc - 0.001, 4),
+            "best_k": rng.choice([2, 3, 3, 3, 4]),
+            "population_size": 5000,
+        })
+
+    population = []
+    for i in range(20):
+        auc_val = round(rng.uniform(0.75, 0.90), 4)
+        population.append({
+            "rank": i,
+            "metrics": {
+                "auc": auc_val,
+                "fit": round(auc_val - 0.001, 4),
+                "accuracy": round(rng.uniform(0.70, 0.88), 4),
+                "sensitivity": round(rng.uniform(0.70, 0.90), 4),
+                "specificity": round(rng.uniform(0.65, 0.88), 4),
+                "k": rng.choice([2, 3, 4, 5]),
+                "language": rng.choice(["binary", "ternary", "ratio"]),
+                "data_type": rng.choice(["raw", "prev"]),
+            },
+            "features": {},
+            "named_features": {f"feature_{rng.randint(0, 49)}": rng.choice([-1, 1]) for _ in range(3)},
+        })
+
     return {
         "fold_count": 1,
-        "generation_count": 10,
+        "generation_count": n_gens,
         "execution_time": 5.42,
         "feature_names": [f"feature_{i}" for i in range(50)],
         "sample_names": [f"sample_{i}" for i in range(100)],
@@ -198,5 +239,7 @@ def _mock_results() -> dict[str, Any]:
             "epoch": 8,
             "features": {5: 1, 12: -1, 37: 1},
         },
-        "population_size": 100,
+        "population_size": len(population),
+        "population": population,
+        "generation_tracking": generation_tracking,
     }

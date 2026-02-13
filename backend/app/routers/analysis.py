@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import logging
+from typing import Optional
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,8 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import get_db, sync_session_factory
-from ..core.deps import get_current_user
-from ..models.db_models import User, Project, Job
+from ..core.deps import get_current_user, get_project_with_access
+from ..models.db_models import User, Job, DatasetFile
 from ..models.schemas import (
     RunConfig,
     ExperimentSummary,
@@ -25,40 +26,50 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 
+async def _verify_job_access(project_id, job_id, user, db):
+    """Verify user has viewer access to the project, then return the job."""
+    await get_project_with_access(project_id, user, db, require_role="viewer")
+    result = await db.execute(
+        select(Job).where(Job.id == job_id, Job.project_id == project_id)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
 @router.post("/{project_id}/run", response_model=ExperimentSummary)
 async def run_analysis(
     project_id: str,
     config: RunConfig,
-    x_dataset_id: str,
-    y_dataset_id: str,
-    xtest_dataset_id: str = "",
-    ytest_dataset_id: str = "",
+    x_file_id: str,
+    y_file_id: str,
+    xtest_file_id: str = "",
+    ytest_file_id: str = "",
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = None,
 ):
-    """Launch a gpredomics analysis run."""
-    # Verify project ownership
-    result = await db.execute(
-        select(Project).where(Project.id == project_id, Project.user_id == user.id)
-    )
-    if not result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Project not found")
+    """Launch a gpredomics analysis run (editor access required)."""
+    await get_project_with_access(project_id, user, db, require_role="editor")
 
-    # Resolve dataset paths
-    x_path = storage.get_dataset_path(project_id, x_dataset_id)
-    y_path = storage.get_dataset_path(project_id, y_dataset_id)
+    # Resolve file paths via DatasetFile table
+    async def _resolve_file(file_id: str) -> Optional[str]:
+        r = await db.execute(select(DatasetFile).where(DatasetFile.id == file_id))
+        f = r.scalar_one_or_none()
+        return f.disk_path if f else None
+
+    x_path = await _resolve_file(x_file_id)
+    y_path = await _resolve_file(y_file_id)
     if not x_path or not y_path:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+        raise HTTPException(status_code=404, detail="Dataset file not found")
 
     xtest_path = ""
     ytest_path = ""
-    if xtest_dataset_id:
-        p = storage.get_dataset_path(project_id, xtest_dataset_id)
-        xtest_path = str(p) if p else ""
-    if ytest_dataset_id:
-        p = storage.get_dataset_path(project_id, ytest_dataset_id)
-        ytest_path = str(p) if p else ""
+    if xtest_file_id:
+        xtest_path = await _resolve_file(xtest_file_id) or ""
+    if ytest_file_id:
+        ytest_path = await _resolve_file(ytest_file_id) or ""
 
     # Create job record in database — commit immediately so the background
     # task (which uses a separate sync DB connection) can see the job.
@@ -178,17 +189,8 @@ async def get_job_logs(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get the console log output for a job."""
-    result = await db.execute(
-        select(Job).join(Project).where(
-            Job.id == job_id,
-            Job.project_id == project_id,
-            Project.user_id == user.id,
-        )
-    )
-    job = result.scalar_one_or_none()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    """Get the console log output for a job (viewer access)."""
+    job = await _verify_job_access(project_id, job_id, user, db)
 
     log_path = Path(storage.settings.project_dir) / project_id / "jobs" / job_id / "console.log"
     log_content = ""
@@ -209,17 +211,8 @@ async def get_job_status(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get the status of a running or completed job."""
-    result = await db.execute(
-        select(Job).join(Project).where(
-            Job.id == job_id,
-            Job.project_id == project_id,
-            Project.user_id == user.id,
-        )
-    )
-    job = result.scalar_one_or_none()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    """Get the status of a running or completed job (viewer access)."""
+    job = await _verify_job_access(project_id, job_id, user, db)
 
     if job.status == "completed" and job.results_path:
         results = storage.get_job_result(project_id, job_id)
@@ -236,17 +229,8 @@ async def get_job_detail(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get detailed results of a completed job."""
-    result = await db.execute(
-        select(Job).join(Project).where(
-            Job.id == job_id,
-            Job.project_id == project_id,
-            Project.user_id == user.id,
-        )
-    )
-    job = result.scalar_one_or_none()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found or not completed")
+    """Get detailed results of a completed job (viewer access)."""
+    await _verify_job_access(project_id, job_id, user, db)
 
     results = storage.get_job_result(project_id, job_id)
     if not results:
@@ -276,17 +260,8 @@ async def get_job_results_raw(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get full results JSON including population and generation tracking."""
-    result = await db.execute(
-        select(Job).join(Project).where(
-            Job.id == job_id,
-            Job.project_id == project_id,
-            Project.user_id == user.id,
-        )
-    )
-    job = result.scalar_one_or_none()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    """Get full results JSON including population and generation tracking (viewer access)."""
+    await _verify_job_access(project_id, job_id, user, db)
 
     results = storage.get_job_result(project_id, job_id)
     if not results:
@@ -301,12 +276,11 @@ async def list_jobs(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all jobs for a project."""
+    """List all jobs for a project (viewer access)."""
+    await get_project_with_access(project_id, user, db, require_role="viewer")
+
     result = await db.execute(
-        select(Job).join(Project).where(
-            Job.project_id == project_id,
-            Project.user_id == user.id,
-        ).order_by(Job.created_at.desc())
+        select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc())
     )
     jobs = result.scalars().all()
 

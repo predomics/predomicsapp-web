@@ -50,5 +50,20 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
   }
 
-  return { token, user, isLoggedIn, login, register, fetchUser, logout }
+  async function updateProfile(full_name) {
+    const { data } = await axios.put('/api/auth/me', { full_name })
+    user.value = data
+  }
+
+  async function changePassword(current_password, new_password) {
+    await axios.put('/api/auth/me/password', { current_password, new_password })
+  }
+
+  async function searchUsers(query) {
+    if (!query || query.length < 2) return []
+    const { data } = await axios.get('/api/auth/users/search', { params: { q: query } })
+    return data
+  }
+
+  return { token, user, isLoggedIn, login, register, fetchUser, logout, updateProfile, changePassword, searchUsers }
 })

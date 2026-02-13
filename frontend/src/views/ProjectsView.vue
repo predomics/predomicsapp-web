@@ -1,56 +1,79 @@
 <template>
-  <div class="projects">
-    <h2>Projects</h2>
+  <div class="projects-page">
+    <!-- Left Panel: Project List -->
+    <aside class="list-panel">
+      <div class="list-header">
+        <h2>Projects</h2>
+        <button class="btn-new" @click="showCreate = !showCreate" title="New project">+</button>
+      </div>
 
-    <div class="create-form">
-      <input
-        v-model="newName"
-        placeholder="New project name..."
-        @keyup.enter="createProject"
-      />
-      <button @click="createProject" :disabled="!newName.trim()">
-        Create Project
-      </button>
-    </div>
+      <!-- Create form (collapsible) -->
+      <div v-if="showCreate" class="create-form">
+        <input
+          v-model="newName"
+          placeholder="Project name..."
+          @keyup.enter="createProject"
+        />
+        <button @click="createProject" :disabled="!newName.trim()">Create</button>
+      </div>
 
-    <div v-if="loading" class="loading">Loading...</div>
+      <!-- Search -->
+      <input v-model="search" placeholder="Search projects..." class="search-input" />
 
-    <div v-if="availableSamples.length > 0" class="samples-section">
-      <h3>Demo Datasets</h3>
-      <div v-for="s in availableSamples" :key="s.id" class="sample-card">
-        <div>
-          <strong>{{ s.name }}</strong>
-          <p class="sample-desc">{{ s.description }}</p>
-        </div>
-        <span v-if="s.loaded" class="sample-loaded">Already loaded</span>
-        <button v-else @click="loadSample(s.id)" :disabled="loadingSample">
-          {{ loadingSample ? 'Loading...' : 'Load Demo' }}
+      <!-- Demo datasets -->
+      <div v-if="availableSamples.length > 0" class="section-label">
+        Demo Datasets
+      </div>
+      <div v-for="s in availableSamples" :key="s.id" class="sample-row">
+        <span class="sample-name">{{ s.name }}</span>
+        <span v-if="s.loaded" class="sample-check">&#10003;</span>
+        <button v-else class="sample-btn" @click="loadSample(s.id)" :disabled="loadingSample">
+          Load
         </button>
       </div>
-    </div>
 
-    <div v-if="!loading && projects.length === 0" class="empty">
-      No projects yet. Create one above or load the demo.
-    </div>
-
-    <div v-if="projects.length > 0" class="project-list">
-      <div
-        v-for="p in projects"
+      <!-- Own projects -->
+      <div v-if="filteredProjects.length > 0" class="section-label">My Projects</div>
+      <ProjectCard
+        v-for="p in filteredProjects"
         :key="p.project_id"
-        class="project-card"
-        @click="$router.push(`/project/${p.project_id}`)"
-      >
-        <div class="card-content">
-          <h3>{{ p.name }}</h3>
-          <div class="meta">
-            <span>{{ p.datasets.length }} datasets</span>
-            <span>{{ p.jobs.length }} jobs</span>
-            <span>{{ formatDate(p.created_at) }}</span>
-          </div>
-        </div>
-        <button class="delete-btn" @click.stop="deleteProject(p.project_id, p.name)" title="Delete project">&times;</button>
+        :project="p"
+        :selected="store.selectedId === p.project_id"
+        @select="store.selectedId = p.project_id"
+      />
+
+      <!-- Shared projects -->
+      <div v-if="filteredShared.length > 0" class="section-label">Shared with me</div>
+      <ProjectCard
+        v-for="sp in filteredShared"
+        :key="sp.project_id"
+        :project="sp"
+        :selected="store.selectedId === sp.project_id"
+        :is-shared="true"
+        @select="store.selectedId = sp.project_id"
+      />
+
+      <div v-if="loading" class="list-status">Loading...</div>
+      <div v-else-if="filteredProjects.length === 0 && filteredShared.length === 0 && !search" class="list-status">
+        No projects yet
       </div>
-    </div>
+    </aside>
+
+    <!-- Right Panel: Detail or Empty State -->
+    <main class="detail-area">
+      <ProjectDetailPanel
+        v-if="selectedProject"
+        :project="selectedProject"
+        @open="id => $router.push(`/project/${id}`)"
+        @share="id => $router.push(`/project/${id}`)"
+        @delete="handleDelete"
+      />
+      <EmptyState
+        v-else
+        title="Select a project"
+        message="Choose a project from the list or create a new one to get started."
+      />
+    </main>
   </div>
 </template>
 
@@ -58,27 +81,52 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
+import { useProjectStore } from '../stores/project'
+import ProjectCard from '../components/projects/ProjectCard.vue'
+import ProjectDetailPanel from '../components/projects/ProjectDetailPanel.vue'
+import EmptyState from '../components/projects/EmptyState.vue'
 
 const router = useRouter()
+const store = useProjectStore()
 
-const projects = ref([])
 const newName = ref('')
+const showCreate = ref(false)
+const search = ref('')
 const loading = ref(true)
 const samples = ref([])
 const loadingSample = ref(false)
 
-const projectNames = computed(() => new Set(projects.value.map(p => p.name)))
+const projectNames = computed(() => new Set(store.projects.map(p => p.name)))
 const availableSamples = computed(() =>
   samples.value.map(s => ({ ...s, loaded: projectNames.value.has(s.name) }))
 )
 
-async function fetchProjects() {
+const allProjects = computed(() => [...store.projects, ...store.sharedProjects])
+
+const selectedProject = computed(() =>
+  allProjects.value.find(p => p.project_id === store.selectedId) || null
+)
+
+const filteredProjects = computed(() => {
+  if (!search.value) return store.projects
+  const q = search.value.toLowerCase()
+  return store.projects.filter(p => p.name.toLowerCase().includes(q))
+})
+
+const filteredShared = computed(() => {
+  if (!search.value) return store.sharedProjects
+  const q = search.value.toLowerCase()
+  return store.sharedProjects.filter(p => p.name.toLowerCase().includes(q))
+})
+
+async function fetchData() {
   loading.value = true
   try {
-    const { data } = await axios.get('/api/projects/')
-    projects.value = data
-  } catch (e) {
-    console.error('Failed to load projects:', e)
+    await Promise.all([
+      store.fetchAll(),
+      store.fetchSharedProjects(),
+      fetchSamples(),
+    ])
   } finally {
     loading.value = false
   }
@@ -88,16 +136,15 @@ async function fetchSamples() {
   try {
     const { data } = await axios.get('/api/samples/')
     samples.value = data.filter(s => s.available)
-  } catch (e) {
-    console.error('Failed to load samples:', e)
-  }
+  } catch { /* ignore */ }
 }
 
 async function loadSample(sampleId) {
   loadingSample.value = true
   try {
     const { data } = await axios.post(`/api/samples/${sampleId}/load`)
-    router.push(`/project/${data.project_id}`)
+    await store.fetchAll()
+    store.selectedId = data.project_id
   } catch (e) {
     console.error('Failed to load sample:', e)
   } finally {
@@ -108,62 +155,105 @@ async function loadSample(sampleId) {
 async function createProject() {
   if (!newName.value.trim()) return
   try {
-    await axios.post('/api/projects/', null, { params: { name: newName.value.trim() } })
+    const data = await store.create(newName.value.trim())
     newName.value = ''
-    await fetchProjects()
+    showCreate.value = false
+    store.selectedId = data.project_id
   } catch (e) {
     console.error('Failed to create project:', e)
   }
 }
 
-async function deleteProject(id, name) {
-  if (!confirm(`Delete project "${name}"? This cannot be undone.`)) return
+async function handleDelete(project) {
+  if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return
   try {
-    await axios.delete(`/api/projects/${id}`)
-    await fetchProjects()
+    await store.remove(project.project_id)
   } catch (e) {
-    console.error('Failed to delete project:', e)
     alert('Delete failed: ' + (e.response?.data?.detail || e.message))
   }
 }
 
-function formatDate(iso) {
-  return new Date(iso).toLocaleDateString()
-}
-
-onMounted(() => {
-  fetchProjects()
-  fetchSamples()
-})
+onMounted(fetchData)
 </script>
 
 <style scoped>
-.projects h2 {
-  margin-bottom: 1.5rem;
+.projects-page {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  height: calc(100vh - 60px);
+  margin: -1.5rem -1rem;
+  overflow: hidden;
+}
+
+/* Left panel */
+.list-panel {
+  border-right: 1px solid var(--border-lighter);
+  background: var(--bg-card);
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.25rem;
+}
+
+.list-header h2 {
+  font-size: 1.15rem;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.btn-new {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.btn-new:hover {
+  border-color: var(--brand);
+  color: var(--brand);
 }
 
 .create-form {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 2rem;
+  gap: 0.4rem;
 }
 
 .create-form input {
   flex: 1;
-  padding: 0.5rem 1rem;
-  border: 1px solid #cfd8dc;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
+  background: var(--bg-input);
+  color: var(--text-body);
 }
 
 .create-form button {
-  padding: 0.5rem 1.5rem;
-  background: #1a1a2e;
-  color: white;
+  padding: 0.4rem 0.75rem;
+  background: var(--accent);
+  color: var(--accent-text);
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
+  font-weight: 500;
 }
 
 .create-form button:disabled {
@@ -171,108 +261,84 @@ onMounted(() => {
   cursor: not-allowed;
 }
 
-.project-list {
-  display: grid;
-  gap: 1rem;
+.search-input {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  background: var(--bg-input);
+  color: var(--text-body);
+  width: 100%;
 }
 
-.project-card {
-  display: flex;
-  align-items: center;
-  background: white;
-  padding: 1.25rem;
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-  cursor: pointer;
-  transition: box-shadow 0.2s;
+.section-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  font-weight: 600;
+  padding: 0.5rem 0 0.15rem;
 }
 
-.project-card:hover {
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-}
-
-.card-content {
-  flex: 1;
-}
-
-.card-content h3 {
-  margin-bottom: 0.5rem;
-}
-
-.delete-btn {
-  background: none;
-  border: none;
-  font-size: 1.4rem;
-  color: #b0bec5;
-  cursor: pointer;
-  padding: 0 0.5rem;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.delete-btn:hover {
-  color: #e53935;
-}
-
-.meta {
-  display: flex;
-  gap: 1.5rem;
-  font-size: 0.85rem;
-  color: #78909c;
-}
-
-.samples-section {
-  margin-bottom: 2rem;
-}
-
-.samples-section h3 {
-  font-size: 0.95rem;
-  color: #546e7a;
-  margin-bottom: 0.75rem;
-}
-
-.sample-card {
+/* Sample rows */
+.sample-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #e8f5e9;
-  padding: 1rem 1.25rem;
-  border-radius: 8px;
-  margin-bottom: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--success-bg);
+  border-radius: 6px;
+  font-size: 0.8rem;
 }
 
-.sample-desc {
-  font-size: 0.82rem;
-  color: #546e7a;
-  margin-top: 0.25rem;
+.sample-name {
+  color: var(--text-secondary);
+  font-weight: 500;
 }
 
-.sample-card button {
-  padding: 0.4rem 1rem;
-  background: #2e7d32;
+.sample-check {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.sample-btn {
+  padding: 0.2rem 0.6rem;
+  background: var(--success-dark);
   color: white;
   border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
-  font-size: 0.85rem;
-  white-space: nowrap;
+  font-size: 0.75rem;
 }
 
-.sample-card button:disabled {
+.sample-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
-.sample-loaded {
-  font-size: 0.82rem;
-  color: #4caf50;
-  font-weight: 500;
-  white-space: nowrap;
+.list-status {
+  text-align: center;
+  padding: 2rem 0;
+  color: var(--text-faint);
+  font-size: 0.85rem;
 }
 
-.loading, .empty {
-  text-align: center;
-  padding: 3rem;
-  color: #90a4ae;
+/* Right panel */
+.detail-area {
+  overflow-y: auto;
+  background: var(--bg-page);
+}
+
+@media (max-width: 900px) {
+  .projects-page {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .list-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--border-lighter);
+    max-height: 50vh;
+  }
 }
 </style>

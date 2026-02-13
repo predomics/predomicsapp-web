@@ -63,20 +63,20 @@ onMounted(async () => {
 
 .hero h1 {
   font-size: 2.5rem;
-  color: #1a1a2e;
+  color: var(--text-primary);
   margin-bottom: 0.5rem;
 }
 
 .subtitle {
   font-size: 1.2rem;
-  color: #546e7a;
+  color: var(--text-secondary);
   margin-bottom: 1rem;
 }
 
 .description {
   max-width: 600px;
   margin: 0 auto 2rem;
-  color: #78909c;
+  color: var(--text-muted);
   line-height: 1.6;
 }
 
@@ -90,12 +90,12 @@ onMounted(async () => {
 }
 
 .btn-primary {
-  background: #1a1a2e;
-  color: white;
+  background: var(--accent);
+  color: var(--accent-text);
 }
 
 .btn-primary:hover {
-  background: #16213e;
+  background: var(--accent-hover);
 }
 
 .features {
@@ -106,26 +106,26 @@ onMounted(async () => {
 }
 
 .feature-card {
-  background: white;
+  background: var(--bg-card);
   padding: 1.5rem;
   border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  box-shadow: var(--shadow);
   text-align: left;
 }
 
 .feature-card h3 {
   margin-bottom: 0.5rem;
-  color: #1a1a2e;
+  color: var(--text-primary);
 }
 
 .feature-card p {
-  color: #78909c;
+  color: var(--text-muted);
   font-size: 0.9rem;
   line-height: 1.5;
 }
 
 .status {
   margin-top: 2rem;
-  color: #90a4ae;
+  color: var(--text-faint);
 }
 </style>
