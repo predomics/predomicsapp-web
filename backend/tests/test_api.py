@@ -563,6 +563,25 @@ class TestSamples:
         assert data["name"] == "Qin2014 Liver Cirrhosis"
         assert len(data["datasets"]) == 4
 
+    @pytest.mark.asyncio
+    async def test_load_sample_twice_returns_same_project(self, auth_client):
+        """Loading the same demo twice must NOT create a duplicate project."""
+        sample_dir = Path(os.environ["PREDOMICS_SAMPLE_DIR"])
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        (sample_dir / "Xtrain.tsv").write_text("id\ts1\ts2\nf1\t0.1\t0.2\n")
+        (sample_dir / "Ytrain.tsv").write_text("id\tclass\ns1\t0\ns2\t1\n")
+        (sample_dir / "Xtest.tsv").write_text("id\ts3\nf1\t0.3\n")
+        (sample_dir / "Ytest.tsv").write_text("id\tclass\ns3\t1\n")
+
+        resp1 = await auth_client.post("/api/samples/qin2014_cirrhosis/load")
+        resp2 = await auth_client.post("/api/samples/qin2014_cirrhosis/load")
+        assert resp1.json()["project_id"] == resp2.json()["project_id"]
+
+        # Verify only one project exists
+        projects = (await auth_client.get("/api/projects/")).json()
+        demo_projects = [p for p in projects if p["name"] == "Qin2014 Liver Cirrhosis"]
+        assert len(demo_projects) == 1
+
 
 # ---------------------------------------------------------------------------
 # Project isolation between users

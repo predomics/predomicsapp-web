@@ -15,14 +15,15 @@
 
     <div v-if="loading" class="loading">Loading...</div>
 
-    <div v-if="samples.length > 0" class="samples-section">
+    <div v-if="availableSamples.length > 0" class="samples-section">
       <h3>Demo Datasets</h3>
-      <div v-for="s in samples" :key="s.id" class="sample-card">
+      <div v-for="s in availableSamples" :key="s.id" class="sample-card">
         <div>
           <strong>{{ s.name }}</strong>
           <p class="sample-desc">{{ s.description }}</p>
         </div>
-        <button @click="loadSample(s.id)" :disabled="loadingSample">
+        <span v-if="s.loaded" class="sample-loaded">Already loaded</span>
+        <button v-else @click="loadSample(s.id)" :disabled="loadingSample">
           {{ loadingSample ? 'Loading...' : 'Load Demo' }}
         </button>
       </div>
@@ -39,19 +40,22 @@
         class="project-card"
         @click="$router.push(`/project/${p.project_id}`)"
       >
-        <h3>{{ p.name }}</h3>
-        <div class="meta">
-          <span>{{ p.datasets.length }} datasets</span>
-          <span>{{ p.jobs.length }} jobs</span>
-          <span>{{ formatDate(p.created_at) }}</span>
+        <div class="card-content">
+          <h3>{{ p.name }}</h3>
+          <div class="meta">
+            <span>{{ p.datasets.length }} datasets</span>
+            <span>{{ p.jobs.length }} jobs</span>
+            <span>{{ formatDate(p.created_at) }}</span>
+          </div>
         </div>
+        <button class="delete-btn" @click.stop="deleteProject(p.project_id, p.name)" title="Delete project">&times;</button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 
@@ -62,6 +66,11 @@ const newName = ref('')
 const loading = ref(true)
 const samples = ref([])
 const loadingSample = ref(false)
+
+const projectNames = computed(() => new Set(projects.value.map(p => p.name)))
+const availableSamples = computed(() =>
+  samples.value.map(s => ({ ...s, loaded: projectNames.value.has(s.name) }))
+)
 
 async function fetchProjects() {
   loading.value = true
@@ -104,6 +113,17 @@ async function createProject() {
     await fetchProjects()
   } catch (e) {
     console.error('Failed to create project:', e)
+  }
+}
+
+async function deleteProject(id, name) {
+  if (!confirm(`Delete project "${name}"? This cannot be undone.`)) return
+  try {
+    await axios.delete(`/api/projects/${id}`)
+    await fetchProjects()
+  } catch (e) {
+    console.error('Failed to delete project:', e)
+    alert('Delete failed: ' + (e.response?.data?.detail || e.message))
   }
 }
 
@@ -157,6 +177,8 @@ onMounted(() => {
 }
 
 .project-card {
+  display: flex;
+  align-items: center;
   background: white;
   padding: 1.25rem;
   border-radius: 8px;
@@ -169,8 +191,27 @@ onMounted(() => {
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
 }
 
-.project-card h3 {
+.card-content {
+  flex: 1;
+}
+
+.card-content h3 {
   margin-bottom: 0.5rem;
+}
+
+.delete-btn {
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  color: #b0bec5;
+  cursor: pointer;
+  padding: 0 0.5rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.delete-btn:hover {
+  color: #e53935;
 }
 
 .meta {
@@ -220,6 +261,13 @@ onMounted(() => {
 .sample-card button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.sample-loaded {
+  font-size: 0.82rem;
+  color: #4caf50;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .loading, .empty {
