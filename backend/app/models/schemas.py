@@ -150,11 +150,17 @@ class DatasetInfo(BaseModel):
     features_in_rows: bool = True
 
 
+class DatasetRef(BaseModel):
+    id: str
+    filename: str
+    path: str = ""
+
+
 class ProjectInfo(BaseModel):
     project_id: str
     name: str
     created_at: str
-    datasets: list[str] = []
+    datasets: list[DatasetRef] = []
     jobs: list[str] = []
 
 

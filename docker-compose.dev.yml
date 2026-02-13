@@ -1,0 +1,27 @@
+# Development compose: hot-reload backend + separate frontend dev server
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: predomicsapp-web/Dockerfile
+      target: runtime
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+    environment:
+      - PREDOMICS_DEBUG=true
+      - PREDOMICS_CORS_ORIGINS=["http://localhost:5173","http://localhost:3000"]
+    command: uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm install && npm run dev -- --host"
+    depends_on:
+      - backend

@@ -2,6 +2,7 @@
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,3 +48,18 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(projects.router, prefix="/api")
 app.include_router(analysis.router, prefix="/api")
+
+# Serve Vue.js frontend (production: built into backend/static/)
+_static_dir = Path(__file__).parent / "static"
+if _static_dir.is_dir():
+    from fastapi.responses import FileResponse
+
+    app.mount("/assets", StaticFiles(directory=_static_dir / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve Vue.js SPA — all non-API routes return index.html."""
+        file_path = _static_dir / full_path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(_static_dir / "index.html")
