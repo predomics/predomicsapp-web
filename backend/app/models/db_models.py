@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text, JSON
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text, JSON, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..core.database import Base
@@ -18,10 +18,6 @@ def _new_id():
     return uuid.uuid4().hex[:12]
 
 
-def _new_short_id():
-    return uuid.uuid4().hex[:8]
-
-
 class User(Base):
     __tablename__ = "users"
 
@@ -33,6 +29,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     projects: Mapped[list["Project"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    datasets: Mapped[list["Dataset"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
 
 
 class Project(Base):
@@ -40,24 +37,57 @@ class Project(Base):
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_id)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(String(500), default="")
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     owner: Mapped["User"] = relationship(back_populates="projects")
-    datasets: Mapped[list["Dataset"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    dataset_links: Mapped[list["ProjectDataset"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     jobs: Mapped[list["Job"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    shares: Mapped[list["ProjectShare"]] = relationship(back_populates="project", cascade="all, delete-orphan")
 
 
 class Dataset(Base):
+    """A logical dataset — a named group of files (e.g. Xtrain + Ytrain + Xtest + Ytest)."""
     __tablename__ = "datasets"
 
-    id: Mapped[str] = mapped_column(String(8), primary_key=True, default=_new_short_id)
-    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_id)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(String(500), default="")
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    owner: Mapped["User"] = relationship(back_populates="datasets")
+    files: Mapped[list["DatasetFile"]] = relationship(back_populates="dataset", cascade="all, delete-orphan")
+    project_links: Mapped[list["ProjectDataset"]] = relationship(back_populates="dataset", cascade="all, delete-orphan")
+
+
+class DatasetFile(Base):
+    """A physical file within a dataset (e.g. Xtrain.tsv with role='xtrain')."""
+    __tablename__ = "dataset_files"
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_id)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # xtrain/ytrain/xtest/ytest
     disk_path: Mapped[str] = mapped_column(Text, nullable=False)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
-    project: Mapped["Project"] = relationship(back_populates="datasets")
+    dataset: Mapped["Dataset"] = relationship(back_populates="files")
+
+
+class ProjectDataset(Base):
+    """Junction table: many-to-many between projects and datasets."""
+    __tablename__ = "project_datasets"
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    project: Mapped["Project"] = relationship(back_populates="dataset_links")
+    dataset: Mapped["Dataset"] = relationship(back_populates="project_links")
 
 
 class Job(Base):
@@ -73,3 +103,27 @@ class Job(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     project: Mapped["Project"] = relationship(back_populates="jobs")
+
+
+class ProjectShare(Base):
+    """Share a project with another user (viewer or editor role)."""
+    __tablename__ = "project_shares"
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String(10), nullable=False, default="viewer")  # viewer / editor
+    shared_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    shared_by: Mapped[Optional[str]] = mapped_column(String(12), nullable=True)
+
+    project: Mapped["Project"] = relationship(back_populates="shares")
+    user: Mapped["User"] = relationship()
+
+
+class SchemaVersion(Base):
+    """Track applied schema migrations."""
+    __tablename__ = "schema_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    version: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

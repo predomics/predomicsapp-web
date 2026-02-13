@@ -4,7 +4,9 @@ import axios from 'axios'
 
 export const useProjectStore = defineStore('project', () => {
   const projects = ref([])
+  const sharedProjects = ref([])
   const current = ref(null)
+  const selectedId = ref(null)
   const activeJobId = ref(null)
   const showConsole = ref(false)
   const dataFilters = ref({
@@ -19,20 +21,39 @@ export const useProjectStore = defineStore('project', () => {
     projects.value = data
   }
 
+  async function fetchSharedProjects() {
+    try {
+      const { data } = await axios.get('/api/projects/shared-with-me')
+      sharedProjects.value = data
+    } catch { /* ignore */ }
+  }
+
   async function fetchOne(id) {
     const { data } = await axios.get(`/api/projects/${id}`)
     current.value = data
     return data
   }
 
-  async function create(name) {
-    const { data } = await axios.post('/api/projects/', null, { params: { name } })
+  async function create(name, description = '') {
+    const { data } = await axios.post('/api/projects/', null, { params: { name, description } })
     await fetchAll()
+    return data
+  }
+
+  async function updateProject(id, { name, description } = {}) {
+    const params = {}
+    if (name !== undefined) params.name = name
+    if (description !== undefined) params.description = description
+    const { data } = await axios.patch(`/api/projects/${id}`, null, { params })
+    const idx = projects.value.findIndex(p => p.project_id === id)
+    if (idx >= 0) projects.value[idx] = data
+    if (current.value?.project_id === id) current.value = data
     return data
   }
 
   async function remove(id) {
     await axios.delete(`/api/projects/${id}`)
+    if (selectedId.value === id) selectedId.value = null
     await fetchAll()
   }
 
@@ -46,7 +67,9 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   return {
-    projects, current, activeJobId, showConsole, dataFilters,
-    fetchAll, fetchOne, create, remove, startJob, closeConsole,
+    projects, sharedProjects, current, selectedId,
+    activeJobId, showConsole, dataFilters,
+    fetchAll, fetchSharedProjects, fetchOne, create, updateProject, remove,
+    startJob, closeConsole,
   }
 })

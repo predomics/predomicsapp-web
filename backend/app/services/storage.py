@@ -64,3 +64,38 @@ def get_job_result(project_id: str, job_id: str) -> dict | None:
         return None
     with open(result_path) as f:
         return json.load(f)
+
+
+# ---------------------------------------------------------------------------
+# User-level dataset storage (dataset library)
+# ---------------------------------------------------------------------------
+
+def _datasets_base() -> Path:
+    """Return the base directory for user-level datasets."""
+    return settings.data_dir / "datasets"
+
+
+def save_user_dataset_file(user_id: str, dataset_id: str, filename: str, content: bytes) -> str:
+    """Write a user-level dataset file to disk, return the file path."""
+    dest = _datasets_base() / user_id / f"{dataset_id}_{filename}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(content)
+    return str(dest)
+
+
+def get_user_dataset_path(user_id: str, dataset_id: str) -> Path | None:
+    """Get the file path for a user-level dataset by prefix match."""
+    ds_dir = _datasets_base() / user_id
+    if not ds_dir.exists():
+        return None
+    for f in ds_dir.iterdir():
+        if f.name.startswith(dataset_id):
+            return f
+    return None
+
+
+def delete_user_dataset_file(disk_path: str) -> None:
+    """Delete a single dataset file from disk."""
+    p = Path(disk_path)
+    if p.exists():
+        p.unlink()

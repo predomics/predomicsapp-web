@@ -18,11 +18,21 @@ const routes = [
     component: () => import('./views/ProjectsView.vue'),
   },
   {
+    path: '/profile',
+    name: 'Profile',
+    component: () => import('./views/ProfileView.vue'),
+  },
+  {
+    path: '/datasets',
+    name: 'Datasets',
+    component: () => import('./views/DatasetLibrary.vue'),
+  },
+  {
     path: '/project/:id',
     component: () => import('./views/ProjectDashboard.vue'),
     children: [
-      { path: '', redirect: to => ({ name: 'ProjectData', params: { id: to.params.id } }) },
-      { path: 'data', name: 'ProjectData', component: () => import('./views/DataTab.vue') },
+      { path: '', redirect: to => ({ name: 'ProjectSettings', params: { id: to.params.id } }) },
+      { path: 'data', redirect: to => ({ name: 'ProjectSettings', params: { id: to.params.id } }) },
       { path: 'settings', name: 'ProjectSettings', component: () => import('./views/SettingsTab.vue') },
       { path: 'results', name: 'ProjectResults', component: () => import('./views/ResultsTab.vue') },
       { path: 'results/:jobId', name: 'ProjectJobResults', component: () => import('./views/ResultsTab.vue') },

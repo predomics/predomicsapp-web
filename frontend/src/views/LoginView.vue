@@ -74,24 +74,24 @@ async function submit() {
 }
 
 .login-card {
-  background: white;
+  background: var(--bg-card);
   border-radius: 12px;
   padding: 2.5rem;
   width: 100%;
   max-width: 400px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-card);
 }
 
 .login-title {
   text-align: center;
-  color: #1a1a2e;
+  color: var(--text-primary);
   font-size: 1.75rem;
   margin-bottom: 0.25rem;
 }
 
 .login-subtitle {
   text-align: center;
-  color: #78909c;
+  color: var(--text-muted);
   font-size: 0.9rem;
   margin-bottom: 1.5rem;
 }
@@ -102,23 +102,23 @@ async function submit() {
   margin-bottom: 1.5rem;
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-light);
 }
 
 .tab-switcher button {
   flex: 1;
   padding: 0.6rem;
   border: none;
-  background: #f5f5f5;
-  color: #78909c;
+  background: var(--bg-tab-switcher);
+  color: var(--text-muted);
   font-size: 0.9rem;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .tab-switcher button.active {
-  background: #1a1a2e;
-  color: white;
+  background: var(--accent);
+  color: var(--accent-text);
 }
 
 .field {
@@ -129,26 +129,28 @@ async function submit() {
   display: block;
   font-size: 0.85rem;
   font-weight: 500;
-  color: #546e7a;
+  color: var(--text-secondary);
   margin-bottom: 0.3rem;
 }
 
 .field input {
   width: 100%;
   padding: 0.6rem 0.75rem;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-light);
   border-radius: 6px;
   font-size: 0.9rem;
   outline: none;
   transition: border-color 0.2s;
+  background: var(--bg-input);
+  color: var(--text-body);
 }
 
 .field input:focus {
-  border-color: #4fc3f7;
+  border-color: var(--brand);
 }
 
 .error {
-  color: #e53935;
+  color: var(--danger);
   font-size: 0.85rem;
   margin-bottom: 0.75rem;
 }
@@ -156,8 +158,8 @@ async function submit() {
 .btn-primary {
   width: 100%;
   padding: 0.7rem;
-  background: #1a1a2e;
-  color: white;
+  background: var(--accent);
+  color: var(--accent-text);
   border: none;
   border-radius: 6px;
   font-size: 0.95rem;
@@ -167,7 +169,7 @@ async function submit() {
 }
 
 .btn-primary:hover {
-  background: #2d2d4e;
+  background: var(--accent-hover);
 }
 
 .btn-primary:disabled {

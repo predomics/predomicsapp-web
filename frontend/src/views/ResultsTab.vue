@@ -49,21 +49,10 @@
         </div>
       </div>
 
-      <!-- Convergence chart placeholder -->
+      <!-- Convergence chart (Plotly) -->
       <section class="section" v-if="generationTracking.length > 0">
-        <h3>Convergence</h3>
-        <div class="convergence-chart">
-          <div class="chart-bars">
-            <div
-              v-for="g in generationTracking"
-              :key="g.generation"
-              class="chart-bar"
-              :style="{ height: (g.best_auc * 100) + '%' }"
-              :title="`Gen ${g.generation}: AUC ${g.best_auc.toFixed(4)}`"
-            ></div>
-          </div>
-          <div class="chart-label">Generation &rarr;</div>
-        </div>
+        <h3>Model Evolution (Train vs Test)</h3>
+        <div ref="convergenceChartEl" class="plotly-chart"></div>
       </section>
     </div>
 
@@ -157,7 +146,7 @@
 
     <!-- Empty state -->
     <div v-if="!detail && jobs.length === 0" class="empty">
-      No analysis jobs yet. Go to Settings &amp; Run to launch an analysis.
+      No analysis jobs yet. Go to Data &amp; Run to launch an analysis.
     </div>
     <div v-if="!detail && jobs.length > 0 && !loading" class="empty">
       Select a completed job above to view results.
@@ -167,13 +156,16 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useProjectStore } from '../stores/project'
+import { useThemeStore } from '../stores/theme'
 import axios from 'axios'
+import Plotly from 'plotly.js-dist-min'
 
 const route = useRoute()
 const store = useProjectStore()
+const themeStore = useThemeStore()
 
 const loading = ref(false)
 const detail = ref(null)
@@ -184,10 +176,10 @@ const selectedJobId = ref('')
 const expandedRank = ref(null)
 const popPage = ref(0)
 const popPageSize = 50
+const convergenceChartEl = ref(null)
 
 const jobs = computed(() => {
   const allJobs = store.current?.jobs || []
-  // If jobs are just strings (IDs), wrap them
   return allJobs.map(j => typeof j === 'string' ? { job_id: j, status: 'unknown' } : j)
 })
 
@@ -223,6 +215,83 @@ function toggleExpand(rank) {
   expandedRank.value = expandedRank.value === rank ? null : rank
 }
 
+async function renderConvergenceChart() {
+  await nextTick()
+  if (!convergenceChartEl.value || generationTracking.value.length === 0) return
+
+  const gens = generationTracking.value.map(g => g.generation)
+  const trainAuc = generationTracking.value.map(g => g.best_auc)
+  const hasTest = generationTracking.value.some(g => g.best_auc_test != null)
+  const testAuc = hasTest ? generationTracking.value.map(g => g.best_auc_test) : null
+
+  const dark = themeStore.isDark
+  const trainColor = dark ? '#4fc3f7' : '#1a1a2e'
+  const testColor = dark ? '#ef5350' : '#e53935'
+  const gridColor = dark ? '#3a3a52' : '#e0e0e0'
+  const textColor = dark ? '#d0d0dc' : '#2c3e50'
+  const paperBg = dark ? '#1e1e2e' : '#ffffff'
+
+  const traces = [
+    {
+      x: gens,
+      y: trainAuc,
+      name: 'Train AUC',
+      type: 'scatter',
+      mode: 'lines+markers',
+      line: { color: trainColor, width: 2 },
+      marker: { size: 5 },
+    },
+  ]
+
+  if (testAuc) {
+    traces.push({
+      x: gens,
+      y: testAuc,
+      name: 'Test AUC',
+      type: 'scatter',
+      mode: 'lines+markers',
+      line: { color: testColor, width: 2, dash: 'dash' },
+      marker: { size: 5 },
+    })
+  }
+
+  const allValues = [...trainAuc, ...(testAuc || [])]
+  const layout = {
+    xaxis: {
+      title: { text: 'Generation', font: { color: textColor } },
+      dtick: Math.max(1, Math.floor(gens.length / 10)),
+      gridcolor: gridColor,
+      color: textColor,
+    },
+    yaxis: {
+      title: { text: 'AUC', font: { color: textColor } },
+      range: [
+        Math.max(0, Math.min(...allValues) - 0.05),
+        Math.min(1, Math.max(...allValues) + 0.02),
+      ],
+      gridcolor: gridColor,
+      color: textColor,
+    },
+    margin: { t: 20, b: 50, l: 60, r: 20 },
+    legend: { orientation: 'h', y: 1.12, font: { color: textColor } },
+    height: 300,
+    font: { family: 'system-ui, sans-serif', size: 12, color: textColor },
+    paper_bgcolor: paperBg,
+    plot_bgcolor: paperBg,
+  }
+
+  Plotly.newPlot(convergenceChartEl.value, traces, layout, {
+    responsive: true,
+    displayModeBar: false,
+  })
+}
+
+watch([generationTracking, subTab, () => themeStore.isDark], () => {
+  if (subTab.value === 'summary' && generationTracking.value.length > 0) {
+    renderConvergenceChart()
+  }
+})
+
 async function loadJobResults() {
   if (!selectedJobId.value) return
   loading.value = true
@@ -233,7 +302,7 @@ async function loadJobResults() {
     const { data } = await axios.get(`/api/analysis/${pid}/jobs/${jid}/detail`)
     detail.value = data
 
-    // Try to load extended results (population + tracking) from the results.json
+    // Try to load extended results (population + tracking)
     try {
       const { data: fullResults } = await axios.get(`/api/analysis/${pid}/jobs/${jid}/results`)
       population.value = fullResults.population || []
@@ -254,11 +323,9 @@ async function loadJobList() {
   const pid = route.params.id
   try {
     const { data } = await axios.get(`/api/analysis/${pid}/jobs`)
-    // Store jobs in a local ref for the selector
     if (store.current) {
       store.current.jobs = data
     }
-    // Auto-select from route param or first completed job
     const jobIdFromRoute = route.params.jobId
     if (jobIdFromRoute) {
       selectedJobId.value = jobIdFromRoute
@@ -292,29 +359,31 @@ onMounted(loadJobList)
   align-items: center;
   gap: 0.5rem;
   font-size: 0.85rem;
-  color: #546e7a;
+  color: var(--text-secondary);
 }
 
 .job-selector select {
   padding: 0.4rem 0.6rem;
-  border: 1px solid #cfd8dc;
+  border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 0.9rem;
   min-width: 300px;
+  background: var(--bg-input);
+  color: var(--text-body);
 }
 
 .sub-tabs {
   display: flex;
   gap: 0;
   margin-bottom: 1.5rem;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-light);
 }
 
 .sub-tabs button {
   padding: 0.5rem 1.25rem;
   border: none;
   background: none;
-  color: #78909c;
+  color: var(--text-muted);
   font-size: 0.85rem;
   font-weight: 500;
   cursor: pointer;
@@ -323,8 +392,8 @@ onMounted(loadJobList)
 }
 
 .sub-tabs button.active {
-  color: #1a1a2e;
-  border-bottom-color: #1a1a2e;
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
 }
 
 .summary-grid {
@@ -335,75 +404,50 @@ onMounted(loadJobList)
 }
 
 .stat-card {
-  background: white;
+  background: var(--bg-card);
   padding: 1.25rem;
   border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  box-shadow: var(--shadow);
   text-align: center;
 }
 
 .stat-value {
   font-size: 1.5rem;
   font-weight: 700;
-  color: #1a1a2e;
+  color: var(--text-primary);
 }
 
 .stat-label {
   font-size: 0.8rem;
-  color: #90a4ae;
+  color: var(--text-faint);
   margin-top: 0.25rem;
 }
 
 .section {
-  background: white;
+  background: var(--bg-card);
   padding: 1.5rem;
   border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  box-shadow: var(--shadow);
   margin-bottom: 1.5rem;
 }
 
-.section h3 { margin-bottom: 1rem; }
-.section h4 { margin: 1.5rem 0 0.75rem; color: #546e7a; }
+.section h3 { margin-bottom: 1rem; color: var(--text-primary); }
+.section h4 { margin: 1.5rem 0 0.75rem; color: var(--text-secondary); }
+
+.plotly-chart {
+  width: 100%;
+  min-height: 300px;
+}
 
 .metrics-table { width: 100%; max-width: 400px; }
-.metrics-table td { padding: 0.4rem 0; border-bottom: 1px solid #eceff1; }
-.metric-name { color: #78909c; font-size: 0.9rem; }
-.metric-value { text-align: right; font-weight: 600; }
+.metrics-table td { padding: 0.4rem 0; border-bottom: 1px solid var(--border-lighter); }
+.metric-name { color: var(--text-muted); font-size: 0.9rem; }
+.metric-value { text-align: right; font-weight: 600; color: var(--text-primary); }
 
 .feature-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .feature-chip { padding: 0.35rem 0.75rem; border-radius: 20px; font-size: 0.85rem; font-weight: 500; }
-.feature-chip.positive { background: #e8f5e9; color: #2e7d32; }
-.feature-chip.negative { background: #fce4ec; color: #c62828; }
-
-.convergence-chart {
-  padding: 1rem 0;
-}
-
-.chart-bars {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 150px;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-.chart-bar {
-  flex: 1;
-  background: #1a1a2e;
-  border-radius: 2px 2px 0 0;
-  min-width: 3px;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.chart-bar:hover { opacity: 0.7; }
-
-.chart-label {
-  text-align: center;
-  color: #90a4ae;
-  font-size: 0.75rem;
-  margin-top: 0.5rem;
-}
+.feature-chip.positive { background: var(--success-bg); color: var(--success-dark); }
+.feature-chip.negative { background: var(--danger-bg); color: var(--danger-dark); }
 
 .pop-table {
   width: 100%;
@@ -414,21 +458,22 @@ onMounted(loadJobList)
 .pop-table th {
   text-align: left;
   padding: 0.5rem;
-  border-bottom: 2px solid #e0e0e0;
-  color: #546e7a;
+  border-bottom: 2px solid var(--border-light);
+  color: var(--text-secondary);
   font-weight: 600;
 }
 
 .pop-table td {
   padding: 0.5rem;
-  border-bottom: 1px solid #eceff1;
+  border-bottom: 1px solid var(--border-lighter);
+  color: var(--text-body);
 }
 
 .clickable-row { cursor: pointer; }
-.clickable-row:hover { background: #f5f7fa; }
+.clickable-row:hover { background: var(--bg-card-hover); }
 
 .detail-row td {
-  background: #fafafa;
+  background: var(--bg-badge);
   padding: 1rem;
 }
 
@@ -443,15 +488,16 @@ onMounted(loadJobList)
 
 .pagination button {
   padding: 0.3rem 0.75rem;
-  border: 1px solid #cfd8dc;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: white;
+  background: var(--bg-card);
+  color: var(--text-body);
   cursor: pointer;
 }
 
 .pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.info-text { color: #90a4ae; font-size: 0.85rem; font-style: italic; }
-.empty { text-align: center; padding: 3rem; color: #90a4ae; }
-.loading { text-align: center; padding: 3rem; color: #90a4ae; }
+.info-text { color: var(--text-faint); font-size: 0.85rem; font-style: italic; }
+.empty { text-align: center; padding: 3rem; color: var(--text-faint); }
+.loading { text-align: center; padding: 3rem; color: var(--text-faint); }
 </style>

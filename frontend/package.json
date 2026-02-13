@@ -9,10 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vue": "^3.4",
-    "vue-router": "^4.3",
+    "axios": "^1.6",
     "pinia": "^2.1",
-    "axios": "^1.6"
+    "plotly.js-dist-min": "^3.3.1",
+    "vue": "^3.4",
+    "vue-router": "^4.3"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0",

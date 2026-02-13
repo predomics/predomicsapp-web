@@ -150,18 +150,41 @@ class DatasetInfo(BaseModel):
     features_in_rows: bool = True
 
 
-class DatasetRef(BaseModel):
+class DatasetFileRef(BaseModel):
+    """A single file within a composite dataset."""
     id: str
     filename: str
-    path: str = ""
+    role: Optional[str] = None
+
+
+class DatasetRef(BaseModel):
+    """A composite dataset with its files, as seen from a project."""
+    id: str
+    name: str
+    files: list[DatasetFileRef] = []
+
+
+class DatasetResponse(BaseModel):
+    """Full dataset info for the dataset library."""
+    id: str
+    name: str
+    description: str = ""
+    files: list[DatasetFileRef] = []
+    created_at: str = ""
+    project_count: int = 0
 
 
 class ProjectInfo(BaseModel):
     project_id: str
     name: str
+    description: str = ""
     created_at: str
+    updated_at: Optional[str] = None
     datasets: list[DatasetRef] = []
     jobs: list[str] = []
+    job_count: int = 0
+    share_count: int = 0
+    latest_job_status: Optional[str] = None
 
 
 class HealthResponse(BaseModel):

@@ -89,8 +89,8 @@ onUnmounted(stopPolling)
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #1a1a2e;
-  color: #e0e0e0;
+  background: var(--console-bg);
+  color: var(--console-text);
 }
 
 .console-header {
@@ -98,14 +98,14 @@ onUnmounted(stopPolling)
   align-items: center;
   gap: 0.5rem;
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid #2d2d4a;
+  border-bottom: 1px solid var(--console-border);
   flex-shrink: 0;
 }
 
 .console-header h4 {
   margin: 0;
   font-size: 0.85rem;
-  color: #b0bec5;
+  color: var(--text-nav-link);
   flex: 1;
 }
 
@@ -117,22 +117,22 @@ onUnmounted(stopPolling)
   text-transform: uppercase;
 }
 
-.status-badge.pending { background: #fff3e0; color: #e65100; }
-.status-badge.running { background: #e3f2fd; color: #1565c0; }
-.status-badge.completed { background: #e8f5e9; color: #2e7d32; }
-.status-badge.failed { background: #fce4ec; color: #c62828; }
+.status-badge.pending { background: var(--warning-bg); color: var(--warning-dark); }
+.status-badge.running { background: var(--info-bg); color: var(--info); }
+.status-badge.completed { background: var(--success-bg); color: var(--success-dark); }
+.status-badge.failed { background: var(--danger-bg); color: var(--danger-dark); }
 
 .close-btn {
   background: none;
   border: none;
-  color: #546e7a;
+  color: var(--text-muted);
   font-size: 1.2rem;
   cursor: pointer;
   padding: 0 0.25rem;
   line-height: 1;
 }
 
-.close-btn:hover { color: #e0e0e0; }
+.close-btn:hover { color: var(--console-text); }
 
 .console {
   flex: 1;
