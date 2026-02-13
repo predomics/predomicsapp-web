@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 import logging
-import uuid
-import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.database import get_db, async_session_factory
+from ..core.deps import get_current_user
+from ..models.db_models import User, Project, Job
 from ..models.schemas import (
     RunConfig,
     ExperimentSummary,
@@ -20,9 +24,6 @@ from ..services import engine, storage
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
-# In-memory job status tracker (replace with DB/Redis for production)
-_jobs: dict[str, dict] = {}
-
 
 @router.post("/{project_id}/run", response_model=ExperimentSummary)
 async def run_analysis(
@@ -32,14 +33,16 @@ async def run_analysis(
     y_dataset_id: str,
     xtest_dataset_id: str = "",
     ytest_dataset_id: str = "",
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = None,
 ):
-    """Launch a gpredomics analysis run.
-
-    The analysis runs in the background. Poll the status endpoint to check progress.
-    """
-    meta = storage.get_project(project_id)
-    if not meta:
+    """Launch a gpredomics analysis run."""
+    # Verify project ownership
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == user.id)
+    )
+    if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Project not found")
 
     # Resolve dataset paths
@@ -57,16 +60,13 @@ async def run_analysis(
         p = storage.get_dataset_path(project_id, ytest_dataset_id)
         ytest_path = str(p) if p else ""
 
-    # Create job
-    job_id = uuid.uuid4().hex[:12]
-    job_dir = Path(storage.settings.project_dir) / project_id / "jobs" / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
+    # Create job record in database
+    job = Job(project_id=project_id, status="pending", config=config.model_dump())
+    db.add(job)
+    await db.flush()
 
-    _jobs[job_id] = {
-        "project_id": project_id,
-        "status": JobStatus.pending,
-        "results": None,
-    }
+    job_dir = Path(storage.settings.project_dir) / project_id / "jobs" / job.id
+    job_dir.mkdir(parents=True, exist_ok=True)
 
     # Write param.yaml
     config_dict = config.model_dump()
@@ -79,52 +79,103 @@ async def run_analysis(
         output_dir=str(job_dir),
     )
 
-    # Run in background thread (gpredomics is CPU-bound)
-    background_tasks.add_task(_run_job, job_id, project_id, param_path)
+    # Run in background thread
+    background_tasks.add_task(_run_job, job.id, project_id, param_path)
 
-    return ExperimentSummary(job_id=job_id, status=JobStatus.pending)
+    return ExperimentSummary(job_id=job.id, status=JobStatus.pending)
 
 
 def _run_job(job_id: str, project_id: str, param_path: str) -> None:
-    """Execute gpredomics in a background thread."""
-    _jobs[job_id]["status"] = JobStatus.running
+    """Execute gpredomics in a background thread. Uses its own DB session."""
+    import asyncio
+
+    async def _update_job():
+        async with async_session_factory() as db:
+            result = await db.execute(select(Job).where(Job.id == job_id))
+            job = result.scalar_one()
+            job.status = "running"
+            await db.commit()
+
+        try:
+            results = engine.run_experiment(param_path)
+            results_path = storage.save_job_result(project_id, job_id, results)
+
+            async with async_session_factory() as db:
+                result = await db.execute(select(Job).where(Job.id == job_id))
+                job = result.scalar_one()
+                job.status = "completed"
+                job.results_path = results_path
+                job.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+
+            logger.info("Job %s completed: AUC=%.4f", job_id, results["best_individual"]["auc"])
+        except Exception as e:
+            async with async_session_factory() as db:
+                result = await db.execute(select(Job).where(Job.id == job_id))
+                job = result.scalar_one()
+                job.status = "failed"
+                job.error_message = str(e)
+                job.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+
+            logger.error("Job %s failed: %s", job_id, e)
+
+    loop = asyncio.new_event_loop()
     try:
-        results = engine.run_experiment(param_path)
-        _jobs[job_id]["status"] = JobStatus.completed
-        _jobs[job_id]["results"] = results
-        storage.save_job_result(project_id, job_id, results)
-        logger.info("Job %s completed: AUC=%.4f", job_id, results["best_individual"]["auc"])
-    except Exception as e:
-        _jobs[job_id]["status"] = JobStatus.failed
-        _jobs[job_id]["error"] = str(e)
-        logger.error("Job %s failed: %s", job_id, e)
+        loop.run_until_complete(_update_job())
+    finally:
+        loop.close()
 
 
 @router.get("/{project_id}/jobs/{job_id}", response_model=ExperimentSummary)
-async def get_job_status(project_id: str, job_id: str):
+async def get_job_status(
+    project_id: str,
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Get the status of a running or completed job."""
-    job = _jobs.get(job_id)
+    result = await db.execute(
+        select(Job).join(Project).where(
+            Job.id == job_id,
+            Job.project_id == project_id,
+            Project.user_id == user.id,
+        )
+    )
+    job = result.scalar_one_or_none()
     if not job:
-        # Try loading from disk
-        results = storage.get_job_result(project_id, job_id)
-        if results:
-            return _results_to_summary(job_id, JobStatus.completed, results)
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if job["results"]:
-        return _results_to_summary(job_id, job["status"], job["results"])
+    if job.status == "completed" and job.results_path:
+        results = storage.get_job_result(project_id, job_id)
+        if results:
+            return _results_to_summary(job_id, JobStatus(job.status), results)
 
-    return ExperimentSummary(job_id=job_id, status=job["status"])
+    return ExperimentSummary(job_id=job_id, status=JobStatus(job.status))
 
 
 @router.get("/{project_id}/jobs/{job_id}/detail", response_model=ExperimentDetail)
-async def get_job_detail(project_id: str, job_id: str):
+async def get_job_detail(
+    project_id: str,
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Get detailed results of a completed job."""
-    results = _jobs.get(job_id, {}).get("results")
-    if not results:
-        results = storage.get_job_result(project_id, job_id)
-    if not results:
+    result = await db.execute(
+        select(Job).join(Project).where(
+            Job.id == job_id,
+            Job.project_id == project_id,
+            Project.user_id == user.id,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found or not completed")
+
+    results = storage.get_job_result(project_id, job_id)
+    if not results:
+        raise HTTPException(status_code=404, detail="Results not found")
 
     best = results.get("best_individual", {})
     return ExperimentDetail(
@@ -144,16 +195,29 @@ async def get_job_detail(project_id: str, job_id: str):
 
 
 @router.get("/{project_id}/jobs")
-async def list_jobs(project_id: str):
+async def list_jobs(
+    project_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """List all jobs for a project."""
-    jobs = []
-    for jid, job in _jobs.items():
-        if job["project_id"] == project_id:
-            if job["results"]:
-                jobs.append(_results_to_summary(jid, job["status"], job["results"]))
-            else:
-                jobs.append(ExperimentSummary(job_id=jid, status=job["status"]))
-    return jobs
+    result = await db.execute(
+        select(Job).join(Project).where(
+            Job.project_id == project_id,
+            Project.user_id == user.id,
+        ).order_by(Job.created_at.desc())
+    )
+    jobs = result.scalars().all()
+
+    summaries = []
+    for j in jobs:
+        if j.status == "completed":
+            results = storage.get_job_result(project_id, j.id)
+            if results:
+                summaries.append(_results_to_summary(j.id, JobStatus.completed, results))
+                continue
+        summaries.append(ExperimentSummary(job_id=j.id, status=JobStatus(j.status)))
+    return summaries
 
 
 def _results_to_summary(job_id: str, status: JobStatus, results: dict) -> ExperimentSummary:

@@ -1,6 +1,23 @@
 name: predomics
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: predomics-db
+    environment:
+      POSTGRES_USER: predomics
+      POSTGRES_PASSWORD: predomics
+      POSTGRES_DB: predomics
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U predomics"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   app:
     container_name: predomics-web
     build:
@@ -15,7 +32,13 @@ services:
       - PREDOMICS_UPLOAD_DIR=/app/data/uploads
       - PREDOMICS_PROJECT_DIR=/app/data/projects
       - PREDOMICS_SAMPLE_DIR=/app/data/qin2014_cirrhosis
+      - PREDOMICS_DATABASE_URL=postgresql+asyncpg://predomics:predomics@db:5432/predomics
+      - PREDOMICS_SECRET_KEY=change-me-in-production
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   app-data:
+  pg-data:

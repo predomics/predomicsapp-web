@@ -1,5 +1,22 @@
-# Development compose: hot-reload backend + separate frontend dev server
+# Development compose: hot-reload backend + separate frontend dev server + PostgreSQL
+name: predomics-dev
+
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: predomics-dev-db
+    environment:
+      POSTGRES_USER: predomics
+      POSTGRES_PASSWORD: predomics
+      POSTGRES_DB: predomics
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U predomics"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   backend:
     build:
       context: ..
@@ -12,8 +29,13 @@ services:
       - ./data:/app/data
     environment:
       - PREDOMICS_DEBUG=true
+      - PREDOMICS_DATABASE_URL=postgresql+asyncpg://predomics:predomics@db:5432/predomics
+      - PREDOMICS_SECRET_KEY=dev-secret-key
       - PREDOMICS_CORS_ORIGINS=["http://localhost:5173","http://localhost:3000"]
     command: uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      db:
+        condition: service_healthy
 
   frontend:
     image: node:20-alpine
