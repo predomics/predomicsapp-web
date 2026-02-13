@@ -15,6 +15,19 @@
 
     <div v-if="loading" class="loading">Loading...</div>
 
+    <div v-if="samples.length > 0" class="samples-section">
+      <h3>Demo Datasets</h3>
+      <div v-for="s in samples" :key="s.id" class="sample-card">
+        <div>
+          <strong>{{ s.name }}</strong>
+          <p class="sample-desc">{{ s.description }}</p>
+        </div>
+        <button @click="loadSample(s.id)" :disabled="loadingSample">
+          {{ loadingSample ? 'Loading...' : 'Load Demo' }}
+        </button>
+      </div>
+    </div>
+
     <div v-else-if="projects.length === 0" class="empty">
       No projects yet. Create one to get started.
     </div>
@@ -44,6 +57,8 @@ import axios from 'axios'
 const projects = ref([])
 const newName = ref('')
 const loading = ref(true)
+const samples = ref([])
+const loadingSample = ref(false)
 
 async function fetchProjects() {
   loading.value = true
@@ -54,6 +69,27 @@ async function fetchProjects() {
     console.error('Failed to load projects:', e)
   } finally {
     loading.value = false
+  }
+}
+
+async function fetchSamples() {
+  try {
+    const { data } = await axios.get('/api/samples/')
+    samples.value = data.filter(s => s.available)
+  } catch (e) {
+    console.error('Failed to load samples:', e)
+  }
+}
+
+async function loadSample(sampleId) {
+  loadingSample.value = true
+  try {
+    await axios.post(`/api/samples/${sampleId}/load`)
+    await fetchProjects()
+  } catch (e) {
+    console.error('Failed to load sample:', e)
+  } finally {
+    loadingSample.value = false
   }
 }
 
@@ -72,7 +108,10 @@ function formatDate(iso) {
   return new Date(iso).toLocaleDateString()
 }
 
-onMounted(fetchProjects)
+onMounted(() => {
+  fetchProjects()
+  fetchSamples()
+})
 </script>
 
 <style scoped>
@@ -136,6 +175,48 @@ onMounted(fetchProjects)
   gap: 1.5rem;
   font-size: 0.85rem;
   color: #78909c;
+}
+
+.samples-section {
+  margin-bottom: 2rem;
+}
+
+.samples-section h3 {
+  font-size: 0.95rem;
+  color: #546e7a;
+  margin-bottom: 0.75rem;
+}
+
+.sample-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #e8f5e9;
+  padding: 1rem 1.25rem;
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+}
+
+.sample-desc {
+  font-size: 0.82rem;
+  color: #546e7a;
+  margin-top: 0.25rem;
+}
+
+.sample-card button {
+  padding: 0.4rem 1rem;
+  background: #2e7d32;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.sample-card button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .loading, .empty {

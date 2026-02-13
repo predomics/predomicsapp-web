@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from .core.config import settings
 from .core.database import engine, Base
 from .models import db_models  # noqa: F401 — ensure models are registered
-from .routers import health, projects, analysis, auth
+from .routers import health, projects, analysis, auth, samples
 from .services.storage import ensure_dirs
 
 logging.basicConfig(
@@ -54,6 +54,7 @@ app.include_router(health.router)
 app.include_router(auth.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(analysis.router, prefix="/api")
+app.include_router(samples.router, prefix="/api")
 
 # Serve Vue.js frontend (production: built into backend/static/)
 _static_dir = Path(__file__).parent / "static"
