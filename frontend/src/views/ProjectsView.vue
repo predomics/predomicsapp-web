@@ -28,11 +28,11 @@
       </div>
     </div>
 
-    <div v-else-if="projects.length === 0" class="empty">
-      No projects yet. Create one to get started.
+    <div v-if="!loading && projects.length === 0" class="empty">
+      No projects yet. Create one above or load the demo.
     </div>
 
-    <div v-else class="project-list">
+    <div v-if="projects.length > 0" class="project-list">
       <div
         v-for="p in projects"
         :key="p.project_id"
