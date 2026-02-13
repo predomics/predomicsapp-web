@@ -1,0 +1,26 @@
+[project]
+name = "predomicsapp-backend"
+version = "0.1.0"
+description = "FastAPI backend for PredomicsApp — web interface for gpredomics"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.104",
+    "uvicorn[standard]>=0.24",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "python-multipart>=0.0.6",
+    "aiofiles>=23.0",
+    "numpy>=1.20",
+    "pandas>=1.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "httpx>=0.25",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
