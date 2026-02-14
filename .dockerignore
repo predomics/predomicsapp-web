@@ -1,0 +1,14 @@
+# Only include gpredomics, gpredomicspy and predomicsapp-web for Docker build
+*
+!gpredomics/
+!gpredomicspy/
+!predomicsapp-web/
+
+# Exclude unnecessary subdirectories
+gpredomics/target/
+gpredomicspy/target/
+predomicsapp-web/backend/.venv/
+predomicsapp-web/frontend/node_modules/
+predomicsapp-web/backend/data/
+**/__pycache__/
+**/.git/
