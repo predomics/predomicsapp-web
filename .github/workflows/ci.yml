@@ -68,22 +68,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Also checkout gpredomicspy for Docker build
           path: predomicsapp-web
 
-      - name: Checkout gpredomicspy
+      - name: Checkout gpredomics (Rust ML engine)
+        uses: actions/checkout@v4
+        with:
+          repository: predomics/gpredomics
+          path: gpredomics
+
+      - name: Checkout gpredomicspy (Python bindings)
         uses: actions/checkout@v4
         with:
           repository: predomics/gpredomicspy
           path: gpredomicspy
+
+      - name: Copy .dockerignore to build context root
+        run: cp predomicsapp-web/.dockerignore .dockerignore 2>/dev/null || true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build Docker image
         run: |
-          cd predomicsapp-web
-          docker build -t predomicsapp-web:latest -f Dockerfile ..
+          docker build -t predomicsapp-web:latest -f predomicsapp-web/Dockerfile .
 
       - name: Test Docker image
         run: |
