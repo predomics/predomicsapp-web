@@ -1,13 +1,19 @@
-"""Admin endpoints: user management."""
+"""Admin endpoints: user management and default configuration."""
+
+import json
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.config import settings
 from ..core.database import get_db
 from ..core.deps import get_admin_user
 from ..models.db_models import User, Project, Dataset
 from ..models.auth_schemas import AdminUserResponse, AdminUserUpdate
+
+DEFAULTS_PATH = Path(settings.data_dir) / "admin_defaults.json"
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -114,3 +120,42 @@ async def delete_user(
 
     await db.delete(target)
     return {"status": "deleted", "email": target.email}
+
+
+def _load_defaults() -> dict:
+    """Load admin defaults from disk."""
+    if DEFAULTS_PATH.exists():
+        return json.loads(DEFAULTS_PATH.read_text())
+    return {}
+
+
+def _save_defaults(data: dict) -> None:
+    """Save admin defaults to disk."""
+    DEFAULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DEFAULTS_PATH.write_text(json.dumps(data, indent=2))
+
+
+@router.get("/defaults")
+async def get_defaults(admin: User = Depends(get_admin_user)):
+    """Get the admin default parameter overrides (admin only)."""
+    return _load_defaults()
+
+
+@router.get("/defaults/public")
+async def get_defaults_public():
+    """Get the admin default parameter overrides (public, no auth required).
+
+    Used by the Parameters form to show current server defaults.
+    """
+    return _load_defaults()
+
+
+@router.put("/defaults")
+async def set_defaults(body: dict, admin: User = Depends(get_admin_user)):
+    """Set admin default parameter overrides (admin only).
+
+    Accepts a flat dict of section.key overrides, e.g.:
+    {"general.language": "bin,ter", "ga.population_size": 3000, "voting.vote": true}
+    """
+    _save_defaults(body)
+    return body

@@ -1,26 +1,104 @@
 <template>
   <div class="results-tab">
-    <!-- Job selector -->
-    <div class="job-selector" v-if="jobs.length > 0">
-      <label>Job:
-        <select v-model="selectedJobId" @change="loadJobResults">
-          <option v-for="j in jobs" :key="j.job_id" :value="j.job_id">
-            {{ j.job_id.slice(0, 8) }} &mdash; {{ j.status }}
-            <template v-if="j.best_auc"> (AUC {{ j.best_auc.toFixed(4) }})</template>
-          </option>
-        </select>
-      </label>
+    <!-- Job management table -->
+    <div class="job-table-section" v-if="jobs.length > 0">
+      <div class="job-table-header">
+        <h3>Jobs</h3>
+        <span class="job-count">{{ filteredJobs.length }}<template v-if="jobSearch"> / {{ jobs.length }}</template> job{{ jobs.length !== 1 ? 's' : '' }}</span>
+        <input
+          type="text"
+          v-model="jobSearch"
+          class="job-search"
+          placeholder="Search jobs..."
+        />
+        <button class="btn-sm btn-outline" @click="findDuplicates" :disabled="duplicatesLoading" v-if="jobs.length >= 2">
+          {{ duplicatesLoading ? 'Checking...' : 'Find Duplicates' }}
+        </button>
+      </div>
+      <!-- Duplicate groups panel -->
+      <div v-if="duplicateGroups.length > 0" class="duplicates-panel">
+        <div class="duplicates-header">
+          <strong>{{ duplicateGroups.length }} duplicate group{{ duplicateGroups.length !== 1 ? 's' : '' }} found</strong>
+          <button class="btn-sm btn-danger" @click="cleanupDuplicates">Delete duplicates (keep best)</button>
+          <button class="btn-sm btn-outline" @click="duplicateGroups = []">Dismiss</button>
+        </div>
+        <div v-for="(g, gi) in duplicateGroups" :key="gi" class="dup-group">
+          <div class="dup-group-label">{{ g.config_summary }} ({{ g.jobs.length }} jobs)</div>
+          <div v-for="dj in g.jobs" :key="dj.job_id" class="dup-job" :class="{ 'dup-keep': dj.keep }">
+            <span class="dup-name">{{ dj.name || dj.job_id.slice(0, 8) }}</span>
+            <span class="status-badge" :class="dj.status">{{ dj.status }}</span>
+            <span v-if="dj.best_auc != null">AUC {{ dj.best_auc.toFixed(4) }}</span>
+            <span class="dup-tag" v-if="dj.keep">KEEP</span>
+            <span class="dup-tag dup-remove" v-else>REMOVE</span>
+          </div>
+        </div>
+      </div>
+      <div class="job-table-wrap">
+        <table class="job-table">
+          <thead>
+            <tr>
+              <th class="col-name" @click="toggleJobSort('name')">Name <span v-if="jobSortKey === 'name'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-status" @click="toggleJobSort('status')">Status <span v-if="jobSortKey === 'status'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-auc" @click="toggleJobSort('best_auc')">AUC <span v-if="jobSortKey === 'best_auc'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-k" @click="toggleJobSort('best_k')">k <span v-if="jobSortKey === 'best_k'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-lang">Language</th>
+              <th class="col-pop">Pop</th>
+              <th class="col-config">Config</th>
+              <th class="col-size" @click="toggleJobSort('disk_size_bytes')">Size <span v-if="jobSortKey === 'disk_size_bytes'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-duration" @click="toggleJobSort('duration_seconds')">Duration <span v-if="jobSortKey === 'duration_seconds'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-created" @click="toggleJobSort('created_at')">Created <span v-if="jobSortKey === 'created_at'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-user">User</th>
+              <th class="col-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="j in paginatedJobs"
+              :key="j.job_id"
+              :class="{ 'row-selected': selectedJobId === j.job_id, ['row-' + j.status]: true }"
+              @click="selectJob(j.job_id)"
+            >
+              <td class="col-name" :title="j.job_id">{{ j.name || j.job_id.slice(0, 8) }}</td>
+              <td class="col-status"><span class="status-badge" :class="j.status">{{ j.status }}</span></td>
+              <td class="col-auc">{{ j.best_auc != null ? j.best_auc.toFixed(4) : '—' }}</td>
+              <td class="col-k">{{ j.best_k ?? '—' }}</td>
+              <td class="col-lang">{{ j.language || '—' }}</td>
+              <td class="col-pop">{{ j.population_size ?? '—' }}</td>
+              <td class="col-config" :title="j.config_summary || ''">
+                <span class="config-hash" v-if="j.config_hash">{{ j.config_hash.slice(0, 6) }}</span>
+                <span class="config-detail" v-if="j.config_summary">{{ j.config_summary }}</span>
+              </td>
+              <td class="col-size">{{ formatSize(j.disk_size_bytes) }}</td>
+              <td class="col-duration">{{ formatDuration(j.duration_seconds ?? j.execution_time) }}</td>
+              <td class="col-created">{{ formatDate(j.created_at) }}</td>
+              <td class="col-user">{{ j.user_name || '—' }}</td>
+              <td class="col-actions">
+                <button class="btn-icon btn-delete" @click.stop="confirmDeleteJob(j)" title="Delete job" :disabled="j.status === 'running'">&#10005;</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <!-- Job table pagination -->
+      <div class="job-pagination" v-if="filteredJobs.length > jobPageSize">
+        <button @click="jobPage = Math.max(0, jobPage - 1)" :disabled="jobPage === 0">&laquo; Prev</button>
+        <span>{{ jobPage * jobPageSize + 1 }}&ndash;{{ Math.min((jobPage + 1) * jobPageSize, filteredJobs.length) }} of {{ filteredJobs.length }}</span>
+        <button @click="jobPage++" :disabled="(jobPage + 1) * jobPageSize >= filteredJobs.length">Next &raquo;</button>
+      </div>
     </div>
 
     <!-- Sub-tabs -->
     <nav class="sub-tabs" v-if="detail">
       <button :class="{ active: subTab === 'summary' }" @click="subTab = 'summary'">Summary</button>
-      <button :class="{ active: subTab === 'population' }" @click="subTab = 'population'">Population</button>
       <button :class="{ active: subTab === 'bestmodel' }" @click="subTab = 'bestmodel'">Best Model</button>
+      <button :class="{ active: subTab === 'population' }" @click="subTab = 'population'">Population</button>
+      <button v-if="juryData" :class="{ active: subTab === 'jury' }" @click="subTab = 'jury'">Jury</button>
       <button :class="{ active: subTab === 'comparative' }" @click="subTab = 'comparative'">Comparative</button>
     </nav>
 
-    <!-- Summary sub-tab -->
+    <!-- ============================================================ -->
+    <!-- SUMMARY SUB-TAB                                              -->
+    <!-- ============================================================ -->
     <div v-if="detail && subTab === 'summary'" class="sub-content">
       <div class="summary-grid">
         <div class="stat-card">
@@ -49,102 +127,319 @@
         </div>
       </div>
 
-      <!-- Convergence chart (Plotly) -->
+      <!-- Convergence chart -->
       <section class="section" v-if="generationTracking.length > 0">
-        <h3>Model Evolution (Train vs Test)</h3>
+        <h3>AUC Evolution (Train vs Test)</h3>
         <div ref="convergenceChartEl" class="plotly-chart"></div>
       </section>
+
+      <!-- Feature count + fit evolution -->
+      <div class="chart-row" v-if="generationTracking.length > 0">
+        <section class="section chart-half">
+          <h3>Model Complexity (k)</h3>
+          <div ref="featureCountChartEl" class="plotly-chart"></div>
+        </section>
+        <section class="section chart-half">
+          <h3>Fit vs AUC</h3>
+          <div ref="fitEvolutionChartEl" class="plotly-chart"></div>
+        </section>
+      </div>
     </div>
 
-    <!-- Best Model sub-tab -->
+    <!-- ============================================================ -->
+    <!-- BEST MODEL SUB-TAB                                           -->
+    <!-- ============================================================ -->
     <div v-if="detail && subTab === 'bestmodel'" class="sub-content">
       <section class="section" v-if="detail.best_individual">
-        <h3>Best Model Metrics</h3>
-        <table class="metrics-table">
-          <tr v-for="(val, key) in bestMetrics" :key="key">
-            <td class="metric-name">{{ key }}</td>
-            <td class="metric-value">{{ typeof val === 'number' ? val.toFixed(4) : val }}</td>
-          </tr>
-        </table>
-
-        <h4>Selected Features</h4>
-        <div class="feature-list">
-          <div
-            v-for="(coef, idx) in detail.best_individual.features"
-            :key="idx"
-            class="feature-chip"
-            :class="{ positive: coef > 0, negative: coef < 0 }"
-          >
-            {{ featureName(idx) }} ({{ coef > 0 ? '+1' : '-1' }})
-          </div>
-        </div>
-      </section>
-    </div>
-
-    <!-- Population sub-tab -->
-    <div v-if="detail && subTab === 'population'" class="sub-content">
-      <section class="section">
-        <h3>Population of Models ({{ population.length }} individuals)</h3>
-        <div v-if="population.length > 0">
-          <table class="pop-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>AUC</th>
-                <th>Fit</th>
-                <th>Accuracy</th>
-                <th>k</th>
-                <th>Language</th>
-                <th>Data Type</th>
+        <div class="best-model-layout">
+          <!-- Left column: metrics + radar -->
+          <div class="metrics-col">
+            <h3>Metrics</h3>
+            <table class="metrics-table">
+              <tr v-for="(val, key) in bestMetrics" :key="key">
+                <td class="metric-name">{{ key }}</td>
+                <td class="metric-value">{{ typeof val === 'number' ? val.toFixed(4) : val }}</td>
               </tr>
-            </thead>
-            <tbody>
-              <template v-for="ind in paginatedPopulation" :key="ind.rank">
-                <tr @click="toggleExpand(ind.rank)" class="clickable-row">
-                  <td>{{ ind.rank + 1 }}</td>
-                  <td>{{ ind.metrics.auc?.toFixed(4) }}</td>
-                  <td>{{ ind.metrics.fit?.toFixed(4) }}</td>
-                  <td>{{ ind.metrics.accuracy?.toFixed(4) }}</td>
-                  <td>{{ ind.metrics.k }}</td>
-                  <td>{{ ind.metrics.language }}</td>
-                  <td>{{ ind.metrics.data_type }}</td>
-                </tr>
-                <tr v-if="expandedRank === ind.rank" class="detail-row">
-                  <td colspan="7">
-                    <div class="feature-list">
-                      <div
-                        v-for="(coef, name) in ind.named_features"
-                        :key="name"
-                        class="feature-chip"
-                        :class="{ positive: coef > 0, negative: coef < 0 }"
-                      >
-                        {{ name }} ({{ coef > 0 ? '+1' : '-1' }})
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              </template>
-            </tbody>
-          </table>
-          <div class="pagination" v-if="population.length > popPageSize">
-            <button @click="popPage = Math.max(0, popPage - 1)" :disabled="popPage === 0">&laquo; Prev</button>
-            <span>Page {{ popPage + 1 }} / {{ Math.ceil(population.length / popPageSize) }}</span>
-            <button @click="popPage++" :disabled="(popPage + 1) * popPageSize >= population.length">Next &raquo;</button>
+            </table>
+            <div ref="radarChartEl" class="plotly-chart" style="margin-top: 1rem;"></div>
+          </div>
+          <!-- Right column: coefficients bar chart -->
+          <div class="coefficients-col">
+            <h3>Model Coefficients</h3>
+            <div ref="coefficientsChartEl" class="plotly-chart"></div>
           </div>
         </div>
-        <p v-else class="info-text">Population data not available for this job.</p>
       </section>
+
+      <!-- Feature importance -->
+      <section class="section" v-if="importanceData && importanceData.length > 0">
+        <h3>Feature Importance (MDA)</h3>
+        <div ref="importanceChartEl" class="plotly-chart"></div>
+      </section>
+      <p v-else-if="detail.best_individual" class="info-text">
+        Feature importance not available. Enable "Compute importance" in the Parameters tab to include MDA analysis.
+      </p>
     </div>
 
-    <!-- Comparative sub-tab -->
+    <!-- ============================================================ -->
+    <!-- POPULATION SUB-TAB                                           -->
+    <!-- ============================================================ -->
+    <div v-if="detail && subTab === 'population'" class="sub-content">
+      <!-- Controls -->
+      <div class="pop-controls">
+        <div class="pop-controls-row">
+          <label class="topn-control">
+            Top
+            <input type="number" v-model.number="topNModels" :min="5" :max="filteredPopulation.length" step="5" class="topn-input" />
+            / {{ filteredPopulation.length }} models
+          </label>
+          <label class="fbm-toggle">
+            <input type="checkbox" v-model="fbmEnabled" />
+            FBM only
+            <span class="fbm-badge" v-if="fbmEnabled">{{ fbmCount }} / {{ population.length }}</span>
+          </label>
+        </div>
+
+        <!-- Language filter -->
+        <div class="filter-row" v-if="availableLanguages.length > 1">
+          <span class="filter-label">Language:</span>
+          <label v-for="lang in availableLanguages" :key="lang" class="filter-check">
+            <input type="checkbox" :value="lang" v-model="selectedLanguages" />
+            {{ lang }}
+          </label>
+          <button v-if="selectedLanguages.length > 0" class="filter-clear" @click="selectedLanguages = []">clear</button>
+        </div>
+
+        <!-- Data type filter -->
+        <div class="filter-row" v-if="availableDataTypes.length > 1">
+          <span class="filter-label">Data type:</span>
+          <label v-for="dt in availableDataTypes" :key="dt" class="filter-check">
+            <input type="checkbox" :value="dt" v-model="selectedDataTypes" />
+            {{ dt }}
+          </label>
+          <button v-if="selectedDataTypes.length > 0" class="filter-clear" @click="selectedDataTypes = []">clear</button>
+        </div>
+      </div>
+
+      <!-- Language / Data Type composition -->
+      <div class="chart-row" v-if="filteredPopulation.length > 0">
+        <section class="section chart-half">
+          <h3>Composition by Language &times; Data Type</h3>
+          <div ref="compositionChartEl" class="plotly-chart"></div>
+        </section>
+        <section class="section chart-half">
+          <h3>AUC Distribution by Type</h3>
+          <div ref="metricsByTypeEl" class="plotly-chart"></div>
+        </section>
+      </div>
+
+      <!-- Feature-model heatmap -->
+      <section class="section" v-if="filteredPopulation.length > 0">
+        <h3>Feature-Model Coefficients</h3>
+        <div ref="featureHeatmapEl" class="plotly-chart"></div>
+      </section>
+
+      <!-- Feature prevalence + pop metrics side by side -->
+      <div class="chart-row" v-if="filteredPopulation.length > 0">
+        <section class="section chart-half">
+          <h3>Feature Prevalence</h3>
+          <div ref="featurePrevalenceEl" class="plotly-chart"></div>
+        </section>
+        <section class="section chart-half">
+          <h3>Population Metrics</h3>
+          <div ref="popMetricsEl" class="plotly-chart"></div>
+        </section>
+      </div>
+
+      <!-- Population table -->
+      <section class="section" v-if="filteredPopulation.length > 0">
+        <h3>Population Table ({{ filteredPopulation.length }} individuals)</h3>
+        <table class="pop-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>AUC</th>
+              <th>Fit</th>
+              <th>Accuracy</th>
+              <th>k</th>
+              <th>Language</th>
+              <th>Data Type</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template v-for="ind in paginatedPopulation" :key="ind.rank">
+              <tr @click="toggleExpand(ind.rank)" class="clickable-row">
+                <td>{{ ind.rank + 1 }}</td>
+                <td>{{ ind.metrics.auc?.toFixed(4) }}</td>
+                <td>{{ ind.metrics.fit?.toFixed(4) }}</td>
+                <td>{{ ind.metrics.accuracy?.toFixed(4) }}</td>
+                <td>{{ ind.metrics.k }}</td>
+                <td>{{ ind.metrics.language }}</td>
+                <td>{{ ind.metrics.data_type }}</td>
+              </tr>
+              <tr v-if="expandedRank === ind.rank" class="detail-row">
+                <td colspan="7">
+                  <div class="feature-list">
+                    <div
+                      v-for="[name, coef] in sortedFeatures(ind.named_features)"
+                      :key="name"
+                      class="feature-chip"
+                      :class="{ positive: coef > 0, negative: coef < 0 }"
+                    >
+                      {{ featureLabel(name) }} ({{ coef > 0 ? '+1' : '-1' }})
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <div class="pagination" v-if="filteredPopulation.length > popPageSize">
+          <button @click="popPage = Math.max(0, popPage - 1)" :disabled="popPage === 0">&laquo; Prev</button>
+          <span>Page {{ popPage + 1 }} / {{ Math.ceil(filteredPopulation.length / popPageSize) }}</span>
+          <button @click="popPage++" :disabled="(popPage + 1) * popPageSize >= filteredPopulation.length">Next &raquo;</button>
+        </div>
+      </section>
+      <p v-if="population.length === 0" class="info-text">Population data not available for this job.</p>
+      <p v-else-if="filteredPopulation.length === 0" class="info-text">No models match the current filters.</p>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- JURY SUB-TAB                                                 -->
+    <!-- ============================================================ -->
+    <div v-if="detail && subTab === 'jury'" class="sub-content">
+      <template v-if="juryData">
+        <!-- Jury summary cards -->
+        <div class="summary-grid">
+          <div class="stat-card">
+            <div class="stat-value">{{ juryData.method }}</div>
+            <div class="stat-label">Voting Method</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ juryData.expert_count }}</div>
+            <div class="stat-label">Experts</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ juryData.test?.auc?.toFixed(4) || '—' }}</div>
+            <div class="stat-label">Test AUC</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ juryData.test?.accuracy?.toFixed(4) || '—' }}</div>
+            <div class="stat-label">Test Accuracy</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ juryData.test?.sensitivity?.toFixed(4) || '—' }}</div>
+            <div class="stat-label">Test Sensitivity</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ juryData.test?.specificity?.toFixed(4) || '—' }}</div>
+            <div class="stat-label">Test Specificity</div>
+          </div>
+        </div>
+
+        <!-- Jury vs Best Model comparison -->
+        <section class="section">
+          <h3>Jury vs Best Individual</h3>
+          <div ref="juryComparisonEl" class="plotly-chart"></div>
+        </section>
+
+        <!-- Concordance + Confusion matrices -->
+        <div class="chart-row">
+          <section class="section chart-half" v-if="juryData.sample_predictions?.length || juryData.confusion_train">
+            <h3>Classification Concordance</h3>
+            <div ref="juryConcordanceEl" class="plotly-chart"></div>
+          </section>
+          <div class="chart-half jury-cm-stack">
+            <section class="section" v-if="juryData.confusion_train">
+              <h3>Confusion Matrix (Train)</h3>
+              <div ref="juryConfusionTrainEl" class="plotly-chart"></div>
+            </section>
+            <section class="section" v-if="juryData.confusion_test">
+              <h3>Confusion Matrix (Test)</h3>
+              <div ref="juryConfusionTestEl" class="plotly-chart"></div>
+            </section>
+          </div>
+        </div>
+
+        <!-- Vote Matrix Heatmap -->
+        <section class="section" v-if="juryData.vote_matrix">
+          <h3>Vote Matrix ({{ juryData.vote_matrix.sample_names?.length }} samples × {{ juryData.vote_matrix.n_experts }} experts)</h3>
+          <div ref="voteMatrixEl" class="plotly-chart plotly-chart-tall"></div>
+        </section>
+
+        <!-- Per-sample predictions visual -->
+        <section class="section" v-if="juryData.sample_predictions?.length > 0">
+          <h3>Sample Predictions ({{ juryData.sample_predictions.length }} samples)</h3>
+          <div ref="samplePredictionsEl" class="plotly-chart"></div>
+        </section>
+
+        <!-- FBM info -->
+        <section class="section" v-if="juryData.fbm">
+          <h3>FBM Expert Population ({{ juryData.fbm.count }} models)</h3>
+          <table class="metrics-table" style="max-width: 100%;">
+            <tr>
+              <td class="metric-name"></td>
+              <td class="metric-value" style="font-size: 0.75rem; color: var(--text-muted);">Train</td>
+              <td class="metric-value" style="font-size: 0.75rem; color: var(--text-muted);">Test</td>
+            </tr>
+            <tr v-for="m in ['auc', 'accuracy', 'sensitivity', 'specificity']" :key="m">
+              <td class="metric-name">{{ m.charAt(0).toUpperCase() + m.slice(1) }}</td>
+              <td class="metric-value">{{ juryData.fbm.train[m]?.toFixed(4) }}</td>
+              <td class="metric-value">{{ juryData.fbm.test[m]?.toFixed(4) }}</td>
+            </tr>
+          </table>
+        </section>
+      </template>
+      <p v-else class="info-text">
+        Jury data not available. Enable "Voting" in the Parameters tab and re-run.
+      </p>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- COMPARATIVE SUB-TAB                                          -->
+    <!-- ============================================================ -->
     <div v-if="detail && subTab === 'comparative'" class="sub-content">
-      <section class="section">
-        <h3>Comparative Analysis</h3>
-        <p class="info-text">Multi-job comparison will be available in a future update.</p>
+      <!-- Job checkboxes -->
+      <section class="section" v-if="completedJobs.length > 1">
+        <h3>Select Jobs to Compare</h3>
+        <div class="job-checkboxes">
+          <label v-for="j in completedJobs" :key="j.job_id" class="job-check">
+            <input type="checkbox" :value="j.job_id" v-model="compareJobIds" />
+            <span class="job-check-label">
+              {{ j.name || j.job_id.slice(0, 8) }}
+              <span v-if="j.best_auc" class="job-check-auc">AUC {{ j.best_auc.toFixed(4) }}</span>
+            </span>
+          </label>
+        </div>
       </section>
+
+      <!-- Comparison charts -->
+      <template v-if="compareData.length >= 2">
+        <section class="section">
+          <h3>Performance Comparison</h3>
+          <div ref="comparisonBarEl" class="plotly-chart"></div>
+        </section>
+
+        <section class="section">
+          <h3>Convergence Overlay</h3>
+          <div ref="comparisonConvergenceEl" class="plotly-chart"></div>
+        </section>
+
+        <section class="section">
+          <h3>Feature Overlap</h3>
+          <div ref="featureOverlapEl" class="plotly-chart"></div>
+        </section>
+      </template>
+
+      <p v-if="completedJobs.length < 2" class="info-text">
+        Run at least 2 completed jobs to enable comparative analysis.
+      </p>
+      <p v-else-if="compareData.length < 2" class="info-text">
+        Select at least 2 jobs above to compare.
+      </p>
     </div>
 
-    <!-- Empty state -->
+    <!-- Empty states -->
     <div v-if="!detail && jobs.length === 0" class="empty">
       No analysis jobs yet. Go to Data &amp; Run to launch an analysis.
     </div>
@@ -159,33 +454,178 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useProjectStore } from '../stores/project'
-import { useThemeStore } from '../stores/theme'
+import { useChartTheme } from '../composables/useChartTheme'
 import axios from 'axios'
 import Plotly from 'plotly.js-dist-min'
 
 const route = useRoute()
 const store = useProjectStore()
-const themeStore = useThemeStore()
+const { themeStore, chartColors, chartLayout, featureLabel: _featureLabel } = useChartTheme()
 
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
 const loading = ref(false)
 const detail = ref(null)
+const fullResults = ref(null)
 const population = ref([])
 const generationTracking = ref([])
+const mspAnnotations = ref({})
 const subTab = ref('summary')
 const selectedJobId = ref('')
 const expandedRank = ref(null)
 const popPage = ref(0)
-const popPageSize = 50
-const convergenceChartEl = ref(null)
+const popPageSize = 10
+const topNModels = ref(50)
 
+// Jury & importance state
+const juryData = ref(null)
+const importanceData = ref(null)
+
+// Population filter state (P2.2 + P2.3)
+const selectedLanguages = ref([])
+const selectedDataTypes = ref([])
+const fbmEnabled = ref(false)
+
+// Comparative state
+const compareJobIds = ref([])
+const compareData = ref([])
+
+// Job table state: sort, search, pagination
+const jobSortKey = ref('created_at')
+const jobSortAsc = ref(false)
+const jobSearch = ref('')
+const jobPage = ref(0)
+const jobPageSize = 10
+
+// Duplicate detection state
+const duplicateGroups = ref([])
+const duplicatesLoading = ref(false)
+
+// Chart element refs — Summary
+const convergenceChartEl = ref(null)
+const featureCountChartEl = ref(null)
+const fitEvolutionChartEl = ref(null)
+// Best Model
+const radarChartEl = ref(null)
+const coefficientsChartEl = ref(null)
+const importanceChartEl = ref(null)
+// Population
+const featureHeatmapEl = ref(null)
+const featurePrevalenceEl = ref(null)
+const popMetricsEl = ref(null)
+const compositionChartEl = ref(null)
+const metricsByTypeEl = ref(null)
+// Jury
+const juryComparisonEl = ref(null)
+const juryConcordanceEl = ref(null)
+const juryConfusionTrainEl = ref(null)
+const juryConfusionTestEl = ref(null)
+const samplePredictionsEl = ref(null)
+const voteMatrixEl = ref(null)
+// Comparative
+const comparisonBarEl = ref(null)
+const comparisonConvergenceEl = ref(null)
+const featureOverlapEl = ref(null)
+
+// ---------------------------------------------------------------------------
+// Computed
+// ---------------------------------------------------------------------------
 const jobs = computed(() => {
   const allJobs = store.current?.jobs || []
   return allJobs.map(j => typeof j === 'string' ? { job_id: j, status: 'unknown' } : j)
 })
 
+const filteredJobs = computed(() => {
+  let arr = [...jobs.value]
+  // Text search across name, status, language, config_summary, user_name, config_hash
+  const q = jobSearch.value.trim().toLowerCase()
+  if (q) {
+    arr = arr.filter(j => {
+      const fields = [
+        j.name, j.job_id, j.status, j.language, j.config_summary,
+        j.user_name, j.config_hash, j.data_type,
+      ]
+      return fields.some(f => f && String(f).toLowerCase().includes(q))
+    })
+  }
+  // Sort
+  const key = jobSortKey.value
+  const asc = jobSortAsc.value
+  arr.sort((a, b) => {
+    let va = a[key], vb = b[key]
+    if (va == null && vb == null) return 0
+    if (va == null) return 1
+    if (vb == null) return -1
+    if (typeof va === 'string') va = va.toLowerCase()
+    if (typeof vb === 'string') vb = vb.toLowerCase()
+    if (va < vb) return asc ? -1 : 1
+    if (va > vb) return asc ? 1 : -1
+    return 0
+  })
+  return arr
+})
+
+const paginatedJobs = computed(() => {
+  const start = jobPage.value * jobPageSize
+  return filteredJobs.value.slice(start, start + jobPageSize)
+})
+
+// Keep backward compat: sortedJobs used in some places
+const sortedJobs = filteredJobs
+
+const completedJobs = computed(() => jobs.value.filter(j => j.status === 'completed'))
+
 const paginatedPopulation = computed(() => {
   const start = popPage.value * popPageSize
-  return population.value.slice(start, start + popPageSize)
+  return filteredPopulation.value.slice(start, start + popPageSize)
+})
+
+// Available languages and data types from population
+const availableLanguages = computed(() =>
+  [...new Set(population.value.map(i => i.metrics?.language).filter(Boolean))].sort()
+)
+const availableDataTypes = computed(() =>
+  [...new Set(population.value.map(i => i.metrics?.data_type).filter(Boolean))].sort()
+)
+
+// FBM filter function (P2.3)
+function filterFBM(pop) {
+  if (pop.length === 0) return []
+  const bestFit = pop[0].metrics?.fit
+  if (bestFit == null) return pop
+  // Use sample count from detail if available, otherwise use population size
+  const n = detail.value?.sample_count || pop.length
+  const z = 1.96 // for alpha=0.05
+  const se = Math.sqrt(bestFit * (1 - bestFit) / n)
+  const threshold = bestFit - z * se
+  return pop.filter(ind => ind.metrics?.fit >= threshold)
+}
+
+// Filtered population: language + data_type checkboxes, then optional FBM
+const filteredPopulation = computed(() => {
+  let pop = population.value
+  if (selectedLanguages.value.length > 0) {
+    pop = pop.filter(i => selectedLanguages.value.includes(i.metrics?.language))
+  }
+  if (selectedDataTypes.value.length > 0) {
+    pop = pop.filter(i => selectedDataTypes.value.includes(i.metrics?.data_type))
+  }
+  if (fbmEnabled.value) {
+    pop = filterFBM(pop)
+  }
+  return pop
+})
+
+const fbmCount = computed(() => {
+  let pop = population.value
+  if (selectedLanguages.value.length > 0) {
+    pop = pop.filter(i => selectedLanguages.value.includes(i.metrics?.language))
+  }
+  if (selectedDataTypes.value.length > 0) {
+    pop = pop.filter(i => selectedDataTypes.value.includes(i.metrics?.data_type))
+  }
+  return filterFBM(pop).length
 })
 
 const bestMetrics = computed(() => {
@@ -204,94 +644,1065 @@ const bestMetrics = computed(() => {
   }
 })
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 function featureName(idx) {
-  if (detail.value?.feature_names?.length > idx) {
-    return detail.value.feature_names[idx]
-  }
+  if (detail.value?.feature_names?.length > idx) return detail.value.feature_names[idx]
   return `feature_${idx}`
+}
+
+function featureLabel(name) {
+  return _featureLabel(name, mspAnnotations.value)
 }
 
 function toggleExpand(rank) {
   expandedRank.value = expandedRank.value === rank ? null : rank
 }
 
+// ---------------------------------------------------------------------------
+// MSP Annotations
+// ---------------------------------------------------------------------------
+async function loadMspAnnotations() {
+  const names = detail.value?.feature_names?.filter(n => n.startsWith('msp_')) || []
+  if (names.length === 0) return
+  try {
+    const { data } = await axios.post('/api/data-explore/msp-annotations', { features: names })
+    mspAnnotations.value = data.annotations || {}
+  } catch (e) {
+    console.error('Failed to load MSP annotations:', e)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SUMMARY CHARTS
+// ---------------------------------------------------------------------------
 async function renderConvergenceChart() {
   await nextTick()
   if (!convergenceChartEl.value || generationTracking.value.length === 0) return
 
+  const c = chartColors()
   const gens = generationTracking.value.map(g => g.generation)
   const trainAuc = generationTracking.value.map(g => g.best_auc)
   const hasTest = generationTracking.value.some(g => g.best_auc_test != null)
   const testAuc = hasTest ? generationTracking.value.map(g => g.best_auc_test) : null
 
-  const dark = themeStore.isDark
-  const trainColor = dark ? '#4fc3f7' : '#1a1a2e'
-  const testColor = dark ? '#ef5350' : '#e53935'
-  const gridColor = dark ? '#3a3a52' : '#e0e0e0'
-  const textColor = dark ? '#d0d0dc' : '#2c3e50'
-  const paperBg = dark ? '#1e1e2e' : '#ffffff'
-
-  const traces = [
-    {
-      x: gens,
-      y: trainAuc,
-      name: 'Train AUC',
-      type: 'scatter',
-      mode: 'lines+markers',
-      line: { color: trainColor, width: 2 },
-      marker: { size: 5 },
-    },
-  ]
-
+  const traces = [{
+    x: gens, y: trainAuc, name: 'Train AUC', type: 'scatter', mode: 'lines+markers',
+    line: { color: c.class0, width: 2 }, marker: { size: 4 },
+  }]
   if (testAuc) {
     traces.push({
-      x: gens,
-      y: testAuc,
-      name: 'Test AUC',
-      type: 'scatter',
-      mode: 'lines+markers',
-      line: { color: testColor, width: 2, dash: 'dash' },
-      marker: { size: 5 },
+      x: gens, y: testAuc, name: 'Test AUC', type: 'scatter', mode: 'lines+markers',
+      line: { color: c.danger, width: 2, dash: 'dash' }, marker: { size: 4 },
     })
   }
 
   const allValues = [...trainAuc, ...(testAuc || [])]
-  const layout = {
-    xaxis: {
-      title: { text: 'Generation', font: { color: textColor } },
-      dtick: Math.max(1, Math.floor(gens.length / 10)),
-      gridcolor: gridColor,
-      color: textColor,
-    },
-    yaxis: {
-      title: { text: 'AUC', font: { color: textColor } },
-      range: [
-        Math.max(0, Math.min(...allValues) - 0.05),
-        Math.min(1, Math.max(...allValues) + 0.02),
-      ],
-      gridcolor: gridColor,
-      color: textColor,
-    },
+  Plotly.newPlot(convergenceChartEl.value, traces, chartLayout({
+    xaxis: { title: { text: 'Generation', font: { color: c.text } }, dtick: Math.max(1, Math.floor(gens.length / 10)), gridcolor: c.grid, color: c.text },
+    yaxis: { title: { text: 'AUC', font: { color: c.text } }, range: [Math.max(0, Math.min(...allValues) - 0.05), Math.min(1, Math.max(...allValues) + 0.02)], gridcolor: c.grid, color: c.text },
+    legend: { orientation: 'h', y: 1.12, font: { color: c.text } },
+    height: 280,
     margin: { t: 20, b: 50, l: 60, r: 20 },
-    legend: { orientation: 'h', y: 1.12, font: { color: textColor } },
-    height: 300,
-    font: { family: 'system-ui, sans-serif', size: 12, color: textColor },
-    paper_bgcolor: paperBg,
-    plot_bgcolor: paperBg,
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderFeatureCountChart() {
+  await nextTick()
+  if (!featureCountChartEl.value || generationTracking.value.length === 0) return
+
+  const c = chartColors()
+  const gens = generationTracking.value.map(g => g.generation)
+  const ks = generationTracking.value.map(g => g.best_k)
+
+  Plotly.newPlot(featureCountChartEl.value, [{
+    x: gens, y: ks, type: 'scatter', mode: 'lines+markers',
+    line: { color: c.accent, width: 2 }, marker: { size: 4 },
+    name: 'k (features)',
+  }], chartLayout({
+    xaxis: { title: { text: 'Generation', font: { color: c.text } }, dtick: Math.max(1, Math.floor(gens.length / 10)), gridcolor: c.grid, color: c.text },
+    yaxis: { title: { text: 'k', font: { color: c.text } }, gridcolor: c.grid, color: c.text, dtick: 1 },
+    height: 240,
+    margin: { t: 10, b: 50, l: 50, r: 20 },
+    showlegend: false,
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderFitEvolutionChart() {
+  await nextTick()
+  if (!fitEvolutionChartEl.value || generationTracking.value.length === 0) return
+
+  const c = chartColors()
+  const gens = generationTracking.value.map(g => g.generation)
+  const fits = generationTracking.value.map(g => g.best_fit)
+  const aucs = generationTracking.value.map(g => g.best_auc)
+
+  Plotly.newPlot(fitEvolutionChartEl.value, [
+    { x: gens, y: aucs, name: 'AUC', type: 'scatter', mode: 'lines', line: { color: c.class0, width: 2 } },
+    { x: gens, y: fits, name: 'Fit', type: 'scatter', mode: 'lines', line: { color: c.warn, width: 2, dash: 'dot' } },
+  ], chartLayout({
+    xaxis: { title: { text: 'Generation', font: { color: c.text } }, dtick: Math.max(1, Math.floor(gens.length / 10)), gridcolor: c.grid, color: c.text },
+    yaxis: { title: { text: 'Value', font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+    legend: { orientation: 'h', y: 1.12, font: { color: c.text } },
+    height: 240,
+    margin: { t: 10, b: 50, l: 50, r: 20 },
+  }), { responsive: true, displayModeBar: false })
+}
+
+function renderSummaryCharts() {
+  renderConvergenceChart()
+  renderFeatureCountChart()
+  renderFitEvolutionChart()
+}
+
+// ---------------------------------------------------------------------------
+// BEST MODEL CHARTS
+// ---------------------------------------------------------------------------
+async function renderCoefficientsChart() {
+  await nextTick()
+  if (!coefficientsChartEl.value || !detail.value?.best_individual) return
+
+  const c = chartColors()
+  const b = detail.value.best_individual
+  const entries = Object.entries(b.features).map(([idx, coef]) => ({
+    name: featureLabel(featureName(parseInt(idx))),
+    coef: parseInt(coef),
+  }))
+  // Sort by coefficient, then by name
+  entries.sort((a, bb) => bb.coef - a.coef || a.name.localeCompare(bb.name))
+
+  const colors = entries.map(e => e.coef > 0 ? c.positiveAlpha : c.negativeAlpha)
+  const borderColors = entries.map(e => e.coef > 0 ? c.positive : c.negative)
+
+  Plotly.newPlot(coefficientsChartEl.value, [{
+    type: 'bar',
+    orientation: 'h',
+    y: entries.map(e => e.name),
+    x: entries.map(e => e.coef),
+    marker: { color: colors, line: { color: borderColors, width: 1.5 } },
+    hovertemplate: '%{y}: %{x}<extra></extra>',
+  }], chartLayout({
+    xaxis: {
+      title: { text: 'Coefficient', font: { color: c.text } },
+      gridcolor: c.grid, color: c.text,
+      zeroline: true, zerolinecolor: c.text, zerolinewidth: 1,
+      dtick: 1,
+    },
+    yaxis: { automargin: true, color: c.text },
+    height: Math.max(250, entries.length * 30 + 60),
+    margin: { t: 10, b: 50, l: 180, r: 20 },
+    showlegend: false,
+    annotations: [{
+      text: `${b.language} | ${b.data_type} | k=${b.k}`,
+      xref: 'paper', yref: 'paper', x: 1, y: 1.06,
+      showarrow: false, font: { color: c.text, size: 11 },
+    }],
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderRadarChart() {
+  await nextTick()
+  if (!radarChartEl.value || !detail.value?.best_individual) return
+
+  const c = chartColors()
+  const b = detail.value.best_individual
+  const categories = ['AUC', 'Accuracy', 'Sensitivity', 'Specificity']
+  const values = [b.auc, b.accuracy, b.sensitivity, b.specificity]
+
+  Plotly.newPlot(radarChartEl.value, [{
+    type: 'scatterpolar',
+    r: [...values, values[0]],
+    theta: [...categories, categories[0]],
+    fill: 'toself',
+    fillcolor: c.class0Alpha,
+    line: { color: c.class0, width: 2 },
+    marker: { size: 5, color: c.class0 },
+    name: 'Best Model',
+  }], {
+    polar: {
+      radialaxis: { visible: true, range: [0, 1], color: c.text, gridcolor: c.grid },
+      angularaxis: { color: c.text },
+      bgcolor: c.paper,
+    },
+    font: { family: 'system-ui, sans-serif', size: 12, color: c.text },
+    paper_bgcolor: c.paper,
+    showlegend: false,
+    height: 280,
+    margin: { t: 30, b: 30, l: 60, r: 60 },
+  }, { responsive: true, displayModeBar: false })
+}
+
+async function renderImportanceChart() {
+  await nextTick()
+  if (!importanceChartEl.value || !importanceData.value?.length) return
+
+  const c = chartColors()
+  const items = [...importanceData.value].sort((a, b) => Math.abs(a.importance) - Math.abs(b.importance))
+
+  Plotly.newPlot(importanceChartEl.value, [{
+    type: 'bar',
+    orientation: 'h',
+    y: items.map(i => featureLabel(i.feature)),
+    x: items.map(i => i.importance),
+    marker: {
+      color: items.map(i => i.importance >= 0 ? c.positiveAlpha : c.negativeAlpha),
+      line: { color: items.map(i => i.importance >= 0 ? c.positive : c.negative), width: 1.5 },
+    },
+    hovertemplate: '%{y}: %{x:.4f}<extra></extra>',
+  }], chartLayout({
+    xaxis: { title: { text: 'Importance (MDA)', font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+    yaxis: { automargin: true, color: c.text },
+    height: Math.max(250, items.length * 25 + 60),
+    margin: { t: 10, b: 50, l: 180, r: 20 },
+    showlegend: false,
+  }), { responsive: true, displayModeBar: false })
+}
+
+function renderBestModelCharts() {
+  renderCoefficientsChart()
+  renderRadarChart()
+  renderImportanceChart()
+}
+
+// ---------------------------------------------------------------------------
+// POPULATION CHARTS
+// ---------------------------------------------------------------------------
+
+/** Build feature-model matrix from top N filtered population individuals */
+function buildFeatureModelMatrix() {
+  const topN = Math.min(topNModels.value, filteredPopulation.value.length)
+  const models = filteredPopulation.value.slice(0, topN)
+
+  // Count feature occurrences and directions
+  const featureInfo = {}
+  for (const ind of models) {
+    for (const [name, coef] of Object.entries(ind.named_features || {})) {
+      if (!featureInfo[name]) featureInfo[name] = { count: 0, pos: 0, neg: 0 }
+      featureInfo[name].count++
+      if (coef > 0) featureInfo[name].pos++
+      else featureInfo[name].neg++
+    }
   }
 
-  Plotly.newPlot(convergenceChartEl.value, traces, layout, {
-    responsive: true,
-    displayModeBar: false,
+  // Sort features by prevalence (most common at top of chart = last in array for Plotly)
+  const sortedFeatures = Object.entries(featureInfo)
+    .sort((a, b) => a[1].count - b[1].count)
+    .map(([name]) => name)
+
+  // Build matrix — also sort models so same-language models cluster
+  const sortedModels = [...models].sort((a, b) => {
+    const la = a.metrics?.language || '', lb = b.metrics?.language || ''
+    if (la !== lb) return la.localeCompare(lb)
+    const da = a.metrics?.data_type || '', db = b.metrics?.data_type || ''
+    return da.localeCompare(db)
+  })
+
+  const matrix = sortedFeatures.map(fname =>
+    sortedModels.map(ind => (ind.named_features || {})[fname] || 0)
+  )
+
+  return { sortedFeatures, matrix, featureInfo, topN }
+}
+
+async function renderCompositionChart() {
+  await nextTick()
+  if (!compositionChartEl.value || filteredPopulation.value.length === 0) return
+
+  const c = chartColors()
+  const counts = {}
+  for (const ind of filteredPopulation.value) {
+    const lang = ind.metrics?.language || 'unknown'
+    const dt = ind.metrics?.data_type || 'unknown'
+    const key = `${lang}|${dt}`
+    counts[key] = (counts[key] || 0) + 1
+  }
+
+  // Group by language, bars per data_type
+  const languages = [...new Set(filteredPopulation.value.map(i => i.metrics?.language || 'unknown'))].sort()
+  const dataTypes = [...new Set(filteredPopulation.value.map(i => i.metrics?.data_type || 'unknown'))].sort()
+  const dtColors = [c.class0Light, c.class1Light, c.accent, c.warn, '#008080']
+
+  const traces = dataTypes.map((dt, i) => ({
+    type: 'bar',
+    name: dt,
+    x: languages,
+    y: languages.map(lang => counts[`${lang}|${dt}`] || 0),
+    marker: { color: dtColors[i % dtColors.length] },
+  }))
+
+  Plotly.newPlot(compositionChartEl.value, traces, chartLayout({
+    barmode: 'group',
+    xaxis: { title: { text: 'Language', font: { color: c.text } }, color: c.text },
+    yaxis: { title: { text: 'Count', font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+    legend: { orientation: 'h', y: 1.12, font: { color: c.text } },
+    height: 300,
+    margin: { t: 30, b: 50, l: 60, r: 20 },
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderMetricsByType() {
+  await nextTick()
+  if (!metricsByTypeEl.value || filteredPopulation.value.length === 0) return
+
+  const c = chartColors()
+  // Group AUC by language
+  const byLang = {}
+  for (const ind of filteredPopulation.value) {
+    const lang = ind.metrics?.language || 'unknown'
+    if (!byLang[lang]) byLang[lang] = []
+    if (ind.metrics?.auc != null) byLang[lang].push(ind.metrics.auc)
+  }
+
+  const languages = Object.keys(byLang).sort()
+  const langColors = [c.class0Light, c.class1Light, c.accent, c.warn, '#008080', c.dimmed]
+
+  const traces = languages.map((lang, i) => ({
+    type: 'violin',
+    y: byLang[lang],
+    name: lang,
+    line: { color: langColors[i % langColors.length] },
+    fillcolor: langColors[i % langColors.length] + '33',
+    points: 'all',
+    pointpos: 0,
+    jitter: 0.3,
+    marker: { color: langColors[i % langColors.length], size: 3, opacity: 0.6 },
+    meanline: { visible: true },
+    box: { visible: false },
+  }))
+
+  Plotly.newPlot(metricsByTypeEl.value, traces, chartLayout({
+    yaxis: { title: { text: 'AUC', font: { color: c.text } }, range: [0, 1.05], gridcolor: c.grid, color: c.text },
+    xaxis: { color: c.text },
+    height: 300,
+    margin: { t: 20, b: 50, l: 50, r: 20 },
+    showlegend: false,
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderFeatureHeatmap() {
+  await nextTick()
+  if (!featureHeatmapEl.value || filteredPopulation.value.length === 0) return
+
+  const c = chartColors()
+  const { sortedFeatures, matrix, featureInfo, topN } = buildFeatureModelMatrix()
+
+  if (sortedFeatures.length === 0) return
+
+  // predomicspkg heatmap gradient: deepskyblue1 → white → firebrick1 (with transparency)
+  const colorscale = [
+    [0, 'rgba(0, 191, 255, 0.55)'],     // deepskyblue1 transparent
+    [0.5, c.paper],
+    [1, 'rgba(255, 48, 48, 0.55)'],      // firebrick1 transparent
+  ]
+
+  // Prevalence annotations on right
+  const annotations = sortedFeatures.map((name, i) => ({
+    text: `${((featureInfo[name].count / topN) * 100).toFixed(0)}%`,
+    x: topN + 0.5,
+    y: i,
+    xref: 'x', yref: 'y',
+    showarrow: false,
+    font: { color: c.dimmed, size: 9 },
+  }))
+
+  Plotly.newPlot(featureHeatmapEl.value, [{
+    type: 'heatmap',
+    z: matrix,
+    x: Array.from({ length: topN }, (_, i) => i + 1),
+    y: sortedFeatures.map(n => featureLabel(n)),
+    colorscale,
+    zmin: -1, zmax: 1,
+    showscale: true,
+    colorbar: {
+      title: { text: 'Coeff', font: { color: c.text, size: 10 } },
+      tickvals: [-1, 0, 1], ticktext: ['-1', '0', '+1'],
+      tickfont: { color: c.text, size: 9 },
+      len: 0.5, thickness: 12,
+    },
+    xgap: 0.5,
+    ygap: 0.5,
+    hovertemplate: 'Feature: %{y}<br>Model #%{x}<br>Coeff: %{z}<extra></extra>',
+  }], chartLayout({
+    xaxis: { title: { text: 'Model Rank', font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+    yaxis: { automargin: true, color: c.text },
+    height: Math.max(300, sortedFeatures.length * 18 + 80),
+    margin: { t: 20, b: 50, l: 180, r: 60 },
+    annotations,
+  }), { responsive: true, displayModeBar: true })
+}
+
+async function renderFeaturePrevalence() {
+  await nextTick()
+  if (!featurePrevalenceEl.value || filteredPopulation.value.length === 0) return
+
+  const c = chartColors()
+  const { sortedFeatures, featureInfo } = buildFeatureModelMatrix()
+
+  // sortedFeatures: ascending by count → last = most prevalent = top of Plotly y-axis
+  const features = sortedFeatures
+  if (features.length === 0) return
+
+  Plotly.newPlot(featurePrevalenceEl.value, [
+    {
+      type: 'bar', orientation: 'h', name: 'Positive (+1)',
+      y: features.map(n => featureLabel(n)),
+      x: features.map(n => featureInfo[n].pos),
+      marker: { color: c.positiveAlpha, line: { color: c.positive, width: 1 } },
+    },
+    {
+      type: 'bar', orientation: 'h', name: 'Negative (-1)',
+      y: features.map(n => featureLabel(n)),
+      x: features.map(n => featureInfo[n].neg),
+      marker: { color: c.negativeAlpha, line: { color: c.negative, width: 1 } },
+    },
+  ], chartLayout({
+    barmode: 'stack',
+    xaxis: { title: { text: 'Count (models)', font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+    yaxis: { automargin: true, color: c.text },
+    height: Math.max(300, features.length * 18 + 80),
+    margin: { t: 20, b: 50, l: 180, r: 20 },
+    legend: { orientation: 'h', y: 1.08, font: { color: c.text } },
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderPopMetrics() {
+  await nextTick()
+  if (!popMetricsEl.value || filteredPopulation.value.length === 0) return
+
+  const c = chartColors()
+  const metricNames = ['auc', 'accuracy', 'sensitivity', 'specificity']
+  const colors = [c.class0Light, c.class1Light, c.accent, c.warn]
+
+  const traces = metricNames.map((m, i) => ({
+    type: 'violin',
+    y: filteredPopulation.value.map(ind => ind.metrics[m]).filter(v => v != null),
+    name: m.charAt(0).toUpperCase() + m.slice(1),
+    line: { color: colors[i] },
+    fillcolor: colors[i] + '33',
+    points: 'all',
+    pointpos: 0,
+    jitter: 0.3,
+    marker: { color: colors[i], size: 3, opacity: 0.6 },
+    meanline: { visible: true },
+    box: { visible: false },
+  }))
+
+  Plotly.newPlot(popMetricsEl.value, traces, chartLayout({
+    yaxis: { title: { text: 'Value', font: { color: c.text } }, range: [0, 1.05], gridcolor: c.grid, color: c.text },
+    xaxis: { color: c.text },
+    height: 350,
+    margin: { t: 20, b: 50, l: 50, r: 20 },
+    showlegend: false,
+  }), { responsive: true, displayModeBar: false })
+}
+
+function renderPopulationCharts() {
+  renderCompositionChart()
+  renderMetricsByType()
+  renderFeatureHeatmap()
+  renderFeaturePrevalence()
+  renderPopMetrics()
+}
+
+// ---------------------------------------------------------------------------
+// JURY CHARTS
+// ---------------------------------------------------------------------------
+async function renderJuryComparison() {
+  await nextTick()
+  if (!juryComparisonEl.value || !juryData.value || !detail.value?.best_individual) return
+
+  const c = chartColors()
+  const b = detail.value.best_individual
+  const j = juryData.value
+  const metricNames = ['auc', 'accuracy', 'sensitivity', 'specificity']
+  const labels = ['AUC', 'Accuracy', 'Sensitivity', 'Specificity']
+
+  const traces = [
+    {
+      type: 'bar', name: 'Best Individual (Train)',
+      x: labels, y: metricNames.map(m => b[m] ?? 0),
+      marker: { color: c.class0Alpha, line: { color: c.class0, width: 1.5 } },
+    },
+    {
+      type: 'bar', name: 'Jury (Train)',
+      x: labels, y: metricNames.map(m => j.train?.[m] ?? 0),
+      marker: { color: c.accentAlpha, line: { color: c.accent, width: 1.5 } },
+    },
+    {
+      type: 'bar', name: 'Jury (Test)',
+      x: labels, y: metricNames.map(m => j.test?.[m] ?? 0),
+      marker: { color: c.class1Alpha, line: { color: c.class1, width: 1.5 } },
+    },
+  ]
+
+  Plotly.newPlot(juryComparisonEl.value, traces, chartLayout({
+    barmode: 'group',
+    yaxis: { title: { text: 'Value', font: { color: c.text } }, range: [0, 1.05], gridcolor: c.grid, color: c.text },
+    xaxis: { color: c.text },
+    height: 320,
+    legend: { orientation: 'h', y: 1.15, font: { color: c.text } },
+    margin: { t: 40, b: 50, l: 50, r: 20 },
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderJuryConcordance() {
+  await nextTick()
+  if (!juryConcordanceEl.value || !juryData.value?.sample_predictions) return
+
+  const c = chartColors()
+  const preds = juryData.value.sample_predictions
+
+  // Tally per class: correct, error, rejected (predicted == -1 or abstain)
+  const tally = { 0: { correct: 0, error: 0, rejected: 0 }, 1: { correct: 0, error: 0, rejected: 0 } }
+  for (const s of preds) {
+    const cls = s.real
+    if (!(cls in tally)) tally[cls] = { correct: 0, error: 0, rejected: 0 }
+    if (s.predicted === -1 || s.predicted === 2) {
+      tally[cls].rejected++
+    } else if (s.correct) {
+      tally[cls].correct++
+    } else {
+      tally[cls].error++
+    }
+  }
+
+  // Also count from confusion matrix abstain if no rejected in predictions
+  const cm = juryData.value.confusion_train
+  if (cm && tally[1].rejected === 0 && tally[0].rejected === 0 && (cm.abstain_1 > 0 || cm.abstain_0 > 0)) {
+    tally[1].rejected = cm.abstain_1 || 0
+    tally[0].rejected = cm.abstain_0 || 0
+    // Adjust correct/error counts from confusion matrix
+    tally[1].correct = cm.tp
+    tally[1].error = cm.fn
+    tally[0].correct = cm.tn
+    tally[0].error = cm.fp
+  }
+
+  const classes = Object.keys(tally).sort()
+  const xLabels = classes.map(cl => `Class ${cl}`)
+
+  const traces = [
+    {
+      type: 'bar', name: 'Correct',
+      x: xLabels, y: classes.map(cl => tally[cl].correct),
+      marker: { color: c.class0Alpha, line: { color: c.class0, width: 1.5 } },
+    },
+    {
+      type: 'bar', name: 'Error',
+      x: xLabels, y: classes.map(cl => tally[cl].error),
+      marker: { color: c.class1Alpha, line: { color: c.class1, width: 1.5 } },
+    },
+    {
+      type: 'bar', name: 'Rejected',
+      x: xLabels, y: classes.map(cl => tally[cl].rejected),
+      marker: { color: 'rgba(255, 215, 0, 0.40)', line: { color: '#DAA520', width: 1.5 } },
+    },
+  ]
+
+  Plotly.newPlot(juryConcordanceEl.value, traces, chartLayout({
+    barmode: 'stack',
+    yaxis: { title: { text: 'Samples', font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+    xaxis: { color: c.text },
+    height: 200,
+    legend: { orientation: 'h', y: 1.2, font: { color: c.text } },
+    margin: { t: 30, b: 40, l: 50, r: 10 },
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderConfusionMatrix(el, cmData, title) {
+  await nextTick()
+  if (!el || !cmData) return
+
+  const c = chartColors()
+  const hasAbstain = (cmData.abstain_1 != null && cmData.abstain_1 > 0) ||
+                     (cmData.abstain_0 != null && cmData.abstain_0 > 0)
+
+  // Main confusion cells (Pred 1, Pred 0)
+  const traces = [{
+    type: 'heatmap',
+    z: [[cmData.tp, cmData.fn], [cmData.fp, cmData.tn]],
+    x: ['Pred 1', 'Pred 0'],
+    y: ['Real 1', 'Real 0'],
+    text: [[String(cmData.tp), String(cmData.fn)], [String(cmData.fp), String(cmData.tn)]],
+    texttemplate: '%{text}',
+    colorscale: [[0, c.paper], [1, 'rgba(0, 191, 255, 0.50)']],
+    showscale: false,
+    xgap: 2, ygap: 2,
+    hovertemplate: '%{y} / %{x}: %{z}<extra></extra>',
+  }]
+
+  const xLabels = ['Pred 1', 'Pred 0']
+
+  // Add rejection column if present
+  if (hasAbstain) {
+    xLabels.push('Rejected')
+    traces[0].z[0].push(cmData.abstain_1 || 0)
+    traces[0].z[1].push(cmData.abstain_0 || 0)
+    traces[0].text[0].push(String(cmData.abstain_1 || 0))
+    traces[0].text[1].push(String(cmData.abstain_0 || 0))
+    traces[0].x = xLabels
+    // Custom colorscale won't highlight the column, so overlay rejection with shapes
+  }
+
+  const layout = chartLayout({
+    xaxis: { color: c.text, side: 'bottom' },
+    yaxis: { color: c.text, autorange: 'reversed' },
+    height: 200,
+    margin: { t: 10, b: 40, l: 60, r: 10 },
+    shapes: [],
+    annotations: [],
+  })
+
+  // Add yellow highlight rectangles behind rejection column
+  if (hasAbstain) {
+    layout.shapes.push(
+      {
+        type: 'rect', xref: 'x', yref: 'y',
+        x0: 1.5, x1: 2.5, y0: -0.5, y1: 0.5,
+        fillcolor: 'rgba(255, 215, 0, 0.25)', line: { width: 0 }, layer: 'below',
+      },
+      {
+        type: 'rect', xref: 'x', yref: 'y',
+        x0: 1.5, x1: 2.5, y0: 0.5, y1: 1.5,
+        fillcolor: 'rgba(255, 215, 0, 0.25)', line: { width: 0 }, layer: 'below',
+      }
+    )
+  }
+
+  Plotly.newPlot(el, traces, layout, { responsive: true, displayModeBar: false })
+}
+
+async function renderSamplePredictions() {
+  await nextTick()
+  if (!samplePredictionsEl.value || !juryData.value?.sample_predictions) return
+
+  const c = chartColors()
+  const preds = [...juryData.value.sample_predictions]
+
+  // Sort: by real class, then errors first, then by consistency ascending
+  preds.sort((a, b) => {
+    if (a.real !== b.real) return a.real - b.real
+    if (a.correct !== b.correct) return a.correct ? 1 : -1
+    return a.consistency - b.consistency
+  })
+
+  const sampleNames = preds.map(s => s.name)
+  const consistencies = preds.map(s => s.consistency)
+
+  // Build color and symbol arrays per sample
+  const colors = preds.map(s => {
+    if (s.predicted === -1 || s.predicted === 2) return 'rgba(255, 215, 0, 0.85)' // rejected – gold
+    if (!s.correct) return c.class1Light                                           // error – red
+    return s.real === 1 ? c.class1Light : c.class0Light                            // correct – colored by class
+  })
+  const symbols = preds.map(s => {
+    if (s.predicted === -1 || s.predicted === 2) return 'diamond'
+    if (!s.correct) return 'x'
+    return 'circle'
+  })
+  const borders = preds.map(s => {
+    if (!s.correct && s.predicted !== -1 && s.predicted !== 2) return c.class1Light
+    return 'rgba(0,0,0,0)'
+  })
+
+  // One trace per group for a proper legend
+  const groups = [
+    { label: 'Correct (class 0)', filter: s => s.correct && s.real === 0, color: c.class0Light, symbol: 'circle' },
+    { label: 'Correct (class 1)', filter: s => s.correct && s.real === 1, color: c.class1Light, symbol: 'circle' },
+    { label: 'Error', filter: s => !s.correct && s.predicted !== -1 && s.predicted !== 2, color: c.class1Light, symbol: 'x' },
+    { label: 'Rejected', filter: s => s.predicted === -1 || s.predicted === 2, color: 'rgba(255, 215, 0, 0.85)', symbol: 'diamond' },
+  ]
+
+  const traces = groups.map(g => {
+    const items = preds.filter(g.filter)
+    if (items.length === 0) return null
+    return {
+      type: 'scatter',
+      mode: 'markers',
+      name: g.label,
+      y: items.map(s => s.name),
+      x: items.map(s => s.consistency),
+      marker: {
+        color: g.color,
+        symbol: g.symbol,
+        size: 10,
+        line: { color: g.symbol === 'x' ? c.class1 : 'rgba(0,0,0,0.2)', width: 1 },
+      },
+      hovertemplate: '%{y}<br>Consistency: %{x:.1f}%<extra>' + g.label + '</extra>',
+    }
+  }).filter(Boolean)
+
+  // Add class separator shape
+  const class0Count = preds.filter(s => s.real === 0).length
+  const shapes = class0Count > 0 && class0Count < preds.length ? [{
+    type: 'line', xref: 'paper', yref: 'y',
+    x0: 0, x1: 1,
+    y0: class0Count - 0.5, y1: class0Count - 0.5,
+    line: { color: c.dimmed, width: 1, dash: 'dot' },
+  }] : []
+
+  const chartHeight = Math.max(200, preds.length * 22 + 60)
+
+  Plotly.newPlot(samplePredictionsEl.value, traces, chartLayout({
+    xaxis: {
+      title: { text: 'Consistency (%)', font: { color: c.text } },
+      range: [0, 105], gridcolor: c.grid, color: c.text,
+    },
+    yaxis: {
+      color: c.text, autorange: 'reversed',
+      categoryorder: 'array', categoryarray: sampleNames,
+      tickfont: { size: 10 },
+    },
+    height: chartHeight,
+    margin: { t: 10, b: 50, l: 120, r: 20 },
+    legend: { orientation: 'h', y: 1.05, font: { color: c.text, size: 11 } },
+    shapes,
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderVoteMatrix() {
+  await nextTick()
+  if (!voteMatrixEl.value || !juryData.value?.vote_matrix) return
+  const c = chartColors()
+  const vm = juryData.value.vote_matrix
+
+  // Sort samples: group by real class, then by consistency (misclassified first)
+  const preds = juryData.value.sample_predictions || []
+  const indices = vm.sample_names.map((_, i) => i)
+  indices.sort((a, b) => {
+    const pa = preds[a], pb = preds[b]
+    if (!pa || !pb) return 0
+    if (pa.real !== pb.real) return pa.real - pb.real
+    if (pa.correct !== pb.correct) return pa.correct ? 1 : -1
+    return pa.consistency - pb.consistency
+  })
+
+  const sortedNames = indices.map(i => vm.sample_names[i])
+  const sortedVotes = indices.map(i => vm.votes[i])
+  const sortedClasses = indices.map(i => vm.real_classes[i])
+
+  // Build annotations for class separators
+  const classLabels = sortedNames.map((n, i) => ({
+    x: -0.5,
+    y: i,
+    text: `<b>${sortedClasses[i]}</b>`,
+    showarrow: false,
+    font: { size: 8, color: c.text },
+    xanchor: 'right',
+  }))
+
+  // predomicspkg colorscale: 0=deepskyblue (class 0), 1=firebrick (class 1) with transparency
+  const colorscale = [
+    [0, c.isDark ? 'rgba(0, 191, 255, 0.45)' : 'rgba(0, 191, 255, 0.30)'],
+    [1, c.isDark ? 'rgba(255, 48, 48, 0.55)' : 'rgba(255, 48, 48, 0.40)'],
+  ]
+
+  // Expert labels: include AUC if available
+  const expertLabels = vm.expert_aucs
+    ? Array.from({ length: vm.n_experts }, (_, i) => `E${i + 1} (${vm.expert_aucs[i]?.toFixed(2) || '?'})`)
+    : Array.from({ length: vm.n_experts }, (_, i) => `E${i + 1}`)
+
+  Plotly.newPlot(voteMatrixEl.value, [{
+    type: 'heatmap',
+    z: sortedVotes,
+    x: expertLabels,
+    y: sortedNames,
+    colorscale,
+    zmin: 0, zmax: 1,
+    showscale: true,
+    colorbar: {
+      tickvals: [0, 1], ticktext: ['0', '1'],
+      tickfont: { color: c.text, size: 9 }, len: 0.4, thickness: 10,
+    },
+    hovertemplate: 'Sample: %{y}<br>Expert: %{x}<br>Vote: %{z}<extra></extra>',
+    xgap: 0.5,
+    ygap: 0.5,
+  }], chartLayout({
+    xaxis: {
+      title: { text: 'Experts', font: { color: c.text, size: 11 } },
+      color: c.text,
+      tickfont: { size: 7 },
+      showticklabels: vm.n_experts <= 50,
+    },
+    yaxis: {
+      color: c.text,
+      automargin: true,
+      tickfont: { size: 8 },
+    },
+    height: Math.max(300, sortedNames.length * 14 + 100),
+    margin: { t: 20, b: 50, l: 120, r: 60 },
+  }), { responsive: true, displayModeBar: false })
+}
+
+function renderJuryCharts() {
+  renderJuryComparison()
+  renderJuryConcordance()
+  if (juryData.value?.confusion_train) renderConfusionMatrix(juryConfusionTrainEl.value, juryData.value.confusion_train)
+  if (juryData.value?.confusion_test) renderConfusionMatrix(juryConfusionTestEl.value, juryData.value.confusion_test)
+  renderSamplePredictions()
+  renderVoteMatrix()
+}
+
+// ---------------------------------------------------------------------------
+// COMPARATIVE CHARTS
+// ---------------------------------------------------------------------------
+// predomicspkg-inspired palette: deepskyblue, firebrick, darkorchid, darkgoldenrod, teal, coral, slateblue, seagreen
+const JOB_COLORS = ['#00BFFF', '#FF3030', '#BA55D3', '#B8860B', '#008080', '#FF7F50', '#6A5ACD', '#2E8B57']
+
+function jobLabel(jobId) {
+  const j = jobs.value.find(x => x.job_id === jobId)
+  return j?.name || jobId.slice(0, 8)
+}
+
+async function loadCompareData() {
+  if (compareJobIds.value.length < 2) {
+    compareData.value = []
+    return
+  }
+  const pid = route.params.id
+  const results = []
+  for (const jid of compareJobIds.value) {
+    try {
+      const { data } = await axios.get(`/api/analysis/${pid}/jobs/${jid}/results`)
+      results.push({ jobId: jid, ...data })
+    } catch { /* skip */ }
+  }
+  compareData.value = results
+}
+
+async function renderComparisonBar() {
+  await nextTick()
+  if (!comparisonBarEl.value || compareData.value.length < 2) return
+
+  const c = chartColors()
+  const metricNames = ['auc', 'accuracy', 'sensitivity', 'specificity']
+  const labels = ['AUC', 'Accuracy', 'Sensitivity', 'Specificity']
+
+  const traces = compareData.value.map((job, i) => {
+    const col = JOB_COLORS[i % JOB_COLORS.length]
+    // Convert hex to rgba with transparency
+    const r = parseInt(col.slice(1, 3), 16), g = parseInt(col.slice(3, 5), 16), b = parseInt(col.slice(5, 7), 16)
+    return {
+      type: 'bar',
+      name: jobLabel(job.jobId),
+      x: labels,
+      y: metricNames.map(m => job.best_individual?.[m] ?? 0),
+      marker: { color: `rgba(${r},${g},${b},0.35)`, line: { color: col, width: 1.5 } },
+    }
+  })
+
+  Plotly.newPlot(comparisonBarEl.value, traces, chartLayout({
+    barmode: 'group',
+    yaxis: { title: { text: 'Value', font: { color: c.text } }, range: [0, 1.05], gridcolor: c.grid, color: c.text },
+    xaxis: { color: c.text },
+    height: 320,
+    legend: { orientation: 'h', y: 1.12, font: { color: c.text } },
+    margin: { t: 30, b: 50, l: 50, r: 20 },
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderComparisonConvergence() {
+  await nextTick()
+  if (!comparisonConvergenceEl.value || compareData.value.length < 2) return
+
+  const c = chartColors()
+  const traces = compareData.value.map((job, i) => {
+    const gt = job.generation_tracking || []
+    return {
+      x: gt.map(g => g.generation),
+      y: gt.map(g => g.best_auc),
+      name: jobLabel(job.jobId),
+      type: 'scatter', mode: 'lines+markers',
+      line: { color: JOB_COLORS[i % JOB_COLORS.length], width: 2 },
+      marker: { size: 4 },
+    }
+  })
+
+  Plotly.newPlot(comparisonConvergenceEl.value, traces, chartLayout({
+    xaxis: { title: { text: 'Generation', font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+    yaxis: { title: { text: 'Best AUC', font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+    legend: { orientation: 'h', y: 1.12, font: { color: c.text } },
+    height: 300,
+    margin: { t: 30, b: 50, l: 60, r: 20 },
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderFeatureOverlap() {
+  await nextTick()
+  if (!featureOverlapEl.value || compareData.value.length < 2) return
+
+  const c = chartColors()
+
+  // Collect features from each job's best individual
+  const jobFeatures = compareData.value.map(job => {
+    const b = job.best_individual || {}
+    const fnames = job.feature_names || []
+    const feats = {}
+    for (const [idx, coef] of Object.entries(b.features || {})) {
+      const name = fnames[parseInt(idx)] || `f_${idx}`
+      feats[name] = parseInt(coef)
+    }
+    return feats
+  })
+
+  // Union of all features
+  const allFeatures = [...new Set(jobFeatures.flatMap(f => Object.keys(f)))]
+  allFeatures.sort()
+
+  // Build matrix
+  const matrix = allFeatures.map(fname =>
+    jobFeatures.map(jf => jf[fname] || 0)
+  )
+
+  // predomicspkg heatmap gradient: deepskyblue1 → white → firebrick1 (transparent + fine grid)
+  const colorscale = [
+    [0, 'rgba(0, 191, 255, 0.55)'],
+    [0.5, c.paper],
+    [1, 'rgba(255, 48, 48, 0.55)'],
+  ]
+
+  Plotly.newPlot(featureOverlapEl.value, [{
+    type: 'heatmap',
+    z: matrix,
+    x: compareData.value.map(j => jobLabel(j.jobId)),
+    y: allFeatures.map(n => featureLabel(n)),
+    colorscale,
+    zmin: -1, zmax: 1,
+    showscale: true,
+    colorbar: {
+      tickvals: [-1, 0, 1], ticktext: ['-1', '0', '+1'],
+      tickfont: { color: c.text, size: 9 }, len: 0.5, thickness: 12,
+    },
+    xgap: 1,
+    ygap: 1,
+    hovertemplate: '%{y}<br>Job %{x}: %{z}<extra></extra>',
+  }], chartLayout({
+    xaxis: { title: { text: 'Job', font: { color: c.text } }, color: c.text },
+    yaxis: { automargin: true, color: c.text },
+    height: Math.max(250, allFeatures.length * 22 + 80),
+    margin: { t: 20, b: 50, l: 180, r: 60 },
+  }), { responsive: true, displayModeBar: false })
+}
+
+function renderComparativeCharts() {
+  renderComparisonBar()
+  renderComparisonConvergence()
+  renderFeatureOverlap()
+}
+
+// ---------------------------------------------------------------------------
+// Job table helpers
+// ---------------------------------------------------------------------------
+function selectJob(jobId) {
+  selectedJobId.value = jobId
+  loadJobResults()
+}
+
+function toggleJobSort(key) {
+  if (jobSortKey.value === key) {
+    jobSortAsc.value = !jobSortAsc.value
+  } else {
+    jobSortKey.value = key
+    jobSortAsc.value = key === 'name' || key === 'status'
+  }
+}
+
+function formatDuration(seconds) {
+  if (seconds == null) return '—'
+  if (seconds < 60) return `${seconds.toFixed(1)}s`
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.round(seconds % 60)
+  return `${mins}m ${secs}s`
+}
+
+function formatDate(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  const now = new Date()
+  const diff = now - d
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function formatSize(bytes) {
+  if (bytes == null) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+function sortedFeatures(namedFeatures) {
+  if (!namedFeatures) return []
+  const entries = Object.entries(namedFeatures)
+  // Group: negative first, then positive; within each group sort alphabetically
+  return entries.sort((a, b) => {
+    if (a[1] !== b[1]) return a[1] - b[1] // neg (-1) before pos (+1)
+    return a[0].localeCompare(b[0])
   })
 }
 
-watch([generationTracking, subTab, () => themeStore.isDark], () => {
-  if (subTab.value === 'summary' && generationTracking.value.length > 0) {
-    renderConvergenceChart()
+async function findDuplicates() {
+  duplicatesLoading.value = true
+  const pid = route.params.id
+  try {
+    const { data } = await axios.get(`/api/analysis/${pid}/jobs/duplicates`)
+    duplicateGroups.value = data
+    if (data.length === 0) alert('No duplicate jobs found.')
+  } catch (e) {
+    console.error('Failed to find duplicates:', e)
+  } finally {
+    duplicatesLoading.value = false
   }
-})
+}
 
+async function cleanupDuplicates() {
+  const toDelete = duplicateGroups.value.flatMap(g => g.jobs.filter(j => !j.keep).map(j => j.job_id))
+  if (toDelete.length === 0) return
+  if (!confirm(`Delete ${toDelete.length} duplicate job${toDelete.length !== 1 ? 's' : ''}? This cannot be undone.`)) return
+  const pid = route.params.id
+  let deleted = 0
+  for (const jid of toDelete) {
+    try {
+      await axios.delete(`/api/analysis/${pid}/jobs/${jid}`)
+      deleted++
+    } catch { /* skip running jobs */ }
+  }
+  duplicateGroups.value = []
+  await loadJobList()
+  if (selectedJobId.value && toDelete.includes(selectedJobId.value)) {
+    selectedJobId.value = ''
+    detail.value = null
+  }
+  alert(`Deleted ${deleted} duplicate job${deleted !== 1 ? 's' : ''}.`)
+}
+
+function truncateVotes(votes) {
+  if (!votes) return '—'
+  return votes.length > 30 ? votes.slice(0, 30) + '...' : votes
+}
+
+async function confirmDeleteJob(job) {
+  if (job.status === 'running') return
+  if (!confirm(`Delete job "${job.name || job.job_id.slice(0, 8)}"? This cannot be undone.`)) return
+  const pid = route.params.id
+  try {
+    await axios.delete(`/api/analysis/${pid}/jobs/${job.job_id}`)
+    await loadJobList()
+    if (selectedJobId.value === job.job_id) {
+      selectedJobId.value = ''
+      detail.value = null
+    }
+  } catch (e) {
+    alert('Delete failed: ' + (e.response?.data?.detail || e.message))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Data loading
+// ---------------------------------------------------------------------------
 async function loadJobResults() {
   if (!selectedJobId.value) return
   loading.value = true
@@ -302,15 +1713,29 @@ async function loadJobResults() {
     const { data } = await axios.get(`/api/analysis/${pid}/jobs/${jid}/detail`)
     detail.value = data
 
-    // Try to load extended results (population + tracking)
     try {
-      const { data: fullResults } = await axios.get(`/api/analysis/${pid}/jobs/${jid}/results`)
-      population.value = fullResults.population || []
-      generationTracking.value = fullResults.generation_tracking || []
+      const { data: raw } = await axios.get(`/api/analysis/${pid}/jobs/${jid}/results`)
+      fullResults.value = raw
+      population.value = raw.population || []
+      generationTracking.value = raw.generation_tracking || []
+      juryData.value = raw.jury || null
+      importanceData.value = raw.importance || null
+      // Reset filters for new job
+      selectedLanguages.value = []
+      selectedDataTypes.value = []
+      fbmEnabled.value = false
+      popPage.value = 0
     } catch {
+      fullResults.value = null
       population.value = []
       generationTracking.value = []
+      juryData.value = null
+      importanceData.value = null
     }
+
+    await loadMspAnnotations()
+    await nextTick()
+    renderActiveTab()
   } catch (e) {
     console.error('Failed to load results:', e)
     detail.value = null
@@ -323,9 +1748,8 @@ async function loadJobList() {
   const pid = route.params.id
   try {
     const { data } = await axios.get(`/api/analysis/${pid}/jobs`)
-    if (store.current) {
-      store.current.jobs = data
-    }
+    if (store.current) store.current.jobs = data
+
     const jobIdFromRoute = route.params.jobId
     if (jobIdFromRoute) {
       selectedJobId.value = jobIdFromRoute
@@ -339,6 +1763,24 @@ async function loadJobList() {
   }
 }
 
+function renderActiveTab() {
+  if (subTab.value === 'summary') renderSummaryCharts()
+  else if (subTab.value === 'bestmodel') renderBestModelCharts()
+  else if (subTab.value === 'population') renderPopulationCharts()
+  else if (subTab.value === 'jury') renderJuryCharts()
+  else if (subTab.value === 'comparative') renderComparativeCharts()
+}
+
+// ---------------------------------------------------------------------------
+// Watchers
+// ---------------------------------------------------------------------------
+watch(subTab, async () => {
+  await nextTick()
+  renderActiveTab()
+})
+
+watch(() => themeStore.isDark, () => renderActiveTab())
+
 watch(() => route.params.jobId, (newId) => {
   if (newId && newId !== selectedJobId.value) {
     selectedJobId.value = newId
@@ -346,39 +1788,304 @@ watch(() => route.params.jobId, (newId) => {
   }
 })
 
+// Reset job page on search change
+watch(jobSearch, () => { jobPage.value = 0 })
+
+// Re-render population charts when topN or filters change
+let _popFilterTimer = null
+function debouncedPopRender() {
+  clearTimeout(_popFilterTimer)
+  _popFilterTimer = setTimeout(() => {
+    popPage.value = 0
+    if (subTab.value === 'population') renderPopulationCharts()
+  }, 300)
+}
+watch(topNModels, debouncedPopRender)
+watch(selectedLanguages, debouncedPopRender, { deep: true })
+watch(selectedDataTypes, debouncedPopRender, { deep: true })
+watch(fbmEnabled, debouncedPopRender)
+
+// Load compare data when selection changes
+watch(compareJobIds, async () => {
+  await loadCompareData()
+  await nextTick()
+  if (subTab.value === 'comparative') renderComparativeCharts()
+}, { deep: true })
+
+// Auto-select all completed jobs for comparison
+watch(completedJobs, (cj) => {
+  if (compareJobIds.value.length === 0 && cj.length >= 2) {
+    compareJobIds.value = cj.slice(0, 4).map(j => j.job_id)
+  }
+}, { immediate: true })
+
 onMounted(loadJobList)
 </script>
 
 <style scoped>
-.job-selector {
-  margin-bottom: 1rem;
+/* Job management table */
+.job-table-section {
+  margin-bottom: 1.5rem;
+}
+.job-table-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.job-table-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+.job-count {
+  font-size: 0.78rem;
+  color: var(--text-faint);
+}
+.job-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+}
+.job-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.job-table th {
+  background: var(--bg-card);
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 2px solid var(--border-light);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+.job-table th:hover {
+  color: var(--text-primary);
+}
+.job-table td {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border-lighter, var(--border-light));
+  color: var(--text-body);
+  white-space: nowrap;
+}
+.job-table tbody tr {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.job-table tbody tr:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.03));
+}
+.job-table tbody tr.row-selected {
+  background: var(--brand-bg, rgba(99,102,241,0.08));
+  border-left: 3px solid var(--brand, #6366f1);
+}
+.job-table tbody tr.row-failed td {
+  opacity: 0.7;
+}
+.col-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.col-status { width: 80px; }
+.col-auc { width: 70px; text-align: right; font-variant-numeric: tabular-nums; }
+.col-k { width: 40px; text-align: right; }
+.col-lang { max-width: 100px; overflow: hidden; text-overflow: ellipsis; }
+.col-pop { width: 50px; text-align: right; }
+.col-config { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.col-size { width: 70px; text-align: right; }
+.col-duration { width: 70px; text-align: right; }
+.col-created { width: 110px; }
+.col-user { max-width: 90px; overflow: hidden; text-overflow: ellipsis; }
+.col-actions { width: 40px; text-align: center; }
+
+.config-hash {
+  display: inline-block;
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.68rem;
+  background: var(--bg-badge, rgba(0,0,0,0.06));
+  color: var(--text-muted);
+  margin-right: 0.3rem;
+}
+.config-detail {
+  font-size: 0.72rem;
+  color: var(--text-faint);
 }
 
-.job-selector label {
+.job-search {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-input, var(--bg-card));
+  color: var(--text-body);
+  min-width: 160px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.job-search:focus {
+  border-color: var(--brand, #6366f1);
+}
+.job-search::placeholder {
+  color: var(--text-faint);
+}
+
+.job-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.job-pagination button {
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-card);
+  color: var(--text-body);
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+.job-pagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.status-badge.completed { background: var(--success-bg); color: var(--success-dark, #2e7d32); }
+.status-badge.running { background: var(--info-bg); color: var(--info, #1976d2); }
+.status-badge.failed { background: var(--danger-bg); color: var(--danger-dark, #c62828); }
+.status-badge.pending { background: var(--warning-bg); color: var(--warning-dark, #e65100); }
+
+.btn-icon {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.btn-delete {
+  color: var(--text-faint);
+}
+.btn-delete:hover:not(:disabled) {
+  background: var(--danger-bg);
+  color: var(--danger-dark, #c62828);
+}
+.btn-delete:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Small buttons */
+.btn-sm {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  transition: all 0.15s;
+}
+.btn-outline {
+  background: transparent;
+  color: var(--text-secondary);
+}
+.btn-outline:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+.btn-outline:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-danger {
+  background: var(--danger-bg);
+  color: var(--danger-dark, #c62828);
+  border-color: transparent;
+}
+.btn-danger:hover {
+  opacity: 0.85;
+}
+
+/* Duplicates panel */
+.duplicates-panel {
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--warning-dark, #e65100);
+  border-radius: 8px;
+  background: var(--warning-bg, #fff3e0);
+}
+.duplicates-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.82rem;
+}
+.dup-group {
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-card);
+  border-radius: 6px;
+  border: 1px solid var(--border-light);
+}
+.dup-group-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 0.3rem;
+}
+.dup-job {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
+  padding: 0.2rem 0;
+  font-size: 0.78rem;
+}
+.dup-job.dup-keep {
+  font-weight: 600;
+}
+.dup-name {
+  min-width: 80px;
+}
+.dup-tag {
+  padding: 0.05rem 0.35rem;
+  border-radius: 6px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: var(--success-bg);
+  color: var(--success-dark, #2e7d32);
+}
+.dup-tag.dup-remove {
+  background: var(--danger-bg);
+  color: var(--danger-dark, #c62828);
 }
 
-.job-selector select {
-  padding: 0.4rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 0.9rem;
-  min-width: 300px;
-  background: var(--bg-input);
-  color: var(--text-body);
-}
-
+/* Sub-tabs */
 .sub-tabs {
   display: flex;
   gap: 0;
   margin-bottom: 1.5rem;
   border-bottom: 1px solid var(--border-light);
 }
-
 .sub-tabs button {
   padding: 0.5rem 1.25rem;
   border: none;
@@ -390,19 +2097,18 @@ onMounted(loadJobList)
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
 }
-
 .sub-tabs button.active {
   color: var(--text-primary);
   border-bottom-color: var(--accent);
 }
 
+/* Summary stat cards */
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 1rem;
   margin-bottom: 1.5rem;
 }
-
 .stat-card {
   background: var(--bg-card);
   padding: 1.25rem;
@@ -410,19 +2116,18 @@ onMounted(loadJobList)
   box-shadow: var(--shadow);
   text-align: center;
 }
-
 .stat-value {
   font-size: 1.5rem;
   font-weight: 700;
   color: var(--text-primary);
 }
-
 .stat-label {
   font-size: 0.8rem;
   color: var(--text-faint);
   margin-top: 0.25rem;
 }
 
+/* Sections */
 .section {
   background: var(--bg-card);
   padding: 1.5rem;
@@ -430,31 +2135,167 @@ onMounted(loadJobList)
   box-shadow: var(--shadow);
   margin-bottom: 1.5rem;
 }
-
-.section h3 { margin-bottom: 1rem; color: var(--text-primary); }
-.section h4 { margin: 1.5rem 0 0.75rem; color: var(--text-secondary); }
-
-.plotly-chart {
-  width: 100%;
-  min-height: 300px;
+.section h3 {
+  margin-bottom: 1rem;
+  color: var(--text-primary);
+  font-size: 0.95rem;
 }
 
-.metrics-table { width: 100%; max-width: 400px; }
-.metrics-table td { padding: 0.4rem 0; border-bottom: 1px solid var(--border-lighter); }
-.metric-name { color: var(--text-muted); font-size: 0.9rem; }
-.metric-value { text-align: right; font-weight: 600; color: var(--text-primary); }
+/* Charts */
+.plotly-chart {
+  width: 100%;
+  min-height: 250px;
+}
+.plotly-chart-tall {
+  min-height: 400px;
+}
 
+/* Vote string display */
+.vote-str { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.vote-mono { font-family: monospace; font-size: 0.72rem; letter-spacing: -0.5px; color: var(--text-muted); }
+.chart-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+.chart-half {
+  min-width: 0;
+}
+.jury-cm-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.jury-cm-stack .section {
+  margin-bottom: 0;
+}
+
+/* Best model layout */
+.best-model-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 2rem;
+  align-items: start;
+}
+.metrics-col { min-width: 0; }
+.coefficients-col { min-width: 0; }
+
+/* Metrics table */
+.metrics-table {
+  width: 100%;
+  max-width: 300px;
+}
+.metrics-table td {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border-lighter);
+}
+.metric-name {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+.metric-value {
+  text-align: right;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Feature chips */
 .feature-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.feature-chip { padding: 0.35rem 0.75rem; border-radius: 20px; font-size: 0.85rem; font-weight: 500; }
+.feature-chip {
+  padding: 0.35rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
 .feature-chip.positive { background: var(--success-bg); color: var(--success-dark); }
 .feature-chip.negative { background: var(--danger-bg); color: var(--danger-dark); }
 
+/* Population controls */
+.pop-controls {
+  margin-bottom: 1rem;
+  background: var(--bg-card);
+  padding: 1rem 1.25rem;
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+.pop-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+.topn-control {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+.topn-input {
+  width: 56px;
+  padding: 0.2rem 0.3rem;
+  font-size: 0.82rem;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-body);
+}
+.fbm-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.fbm-toggle input[type="checkbox"] { width: auto; }
+.fbm-badge {
+  font-size: 0.72rem;
+  background: var(--accent);
+  color: #fff;
+  padding: 0.1rem 0.5rem;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.4rem;
+  flex-wrap: wrap;
+}
+.filter-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  min-width: 70px;
+}
+.filter-check {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--text-body);
+  cursor: pointer;
+}
+.filter-check input[type="checkbox"] { width: auto; }
+.filter-clear {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+/* Population table */
 .pop-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
 }
-
 .pop-table th {
   text-align: left;
   padding: 0.5rem;
@@ -462,20 +2303,18 @@ onMounted(loadJobList)
   color: var(--text-secondary);
   font-weight: 600;
 }
-
 .pop-table td {
   padding: 0.5rem;
   border-bottom: 1px solid var(--border-lighter);
   color: var(--text-body);
 }
-
 .clickable-row { cursor: pointer; }
 .clickable-row:hover { background: var(--bg-card-hover); }
-
 .detail-row td {
   background: var(--bg-badge);
   padding: 1rem;
 }
+.row-error td { color: var(--danger-dark); }
 
 .pagination {
   display: flex;
@@ -485,7 +2324,6 @@ onMounted(loadJobList)
   margin-top: 1rem;
   font-size: 0.85rem;
 }
-
 .pagination button {
   padding: 0.3rem 0.75rem;
   border: 1px solid var(--border);
@@ -494,10 +2332,42 @@ onMounted(loadJobList)
   color: var(--text-body);
   cursor: pointer;
 }
-
 .pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* Comparative */
+.job-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.job-check {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-body);
+  cursor: pointer;
+}
+.job-check input[type="checkbox"] {
+  width: auto;
+}
+.job-check-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.job-check-auc {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+}
+
+/* Common */
 .info-text { color: var(--text-faint); font-size: 0.85rem; font-style: italic; }
 .empty { text-align: center; padding: 3rem; color: var(--text-faint); }
 .loading { text-align: center; padding: 3rem; color: var(--text-faint); }
+
+@media (max-width: 900px) {
+  .best-model-layout { grid-template-columns: 1fr; }
+  .chart-row { grid-template-columns: 1fr; }
+}
 </style>

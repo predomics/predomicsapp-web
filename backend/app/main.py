@@ -464,6 +464,141 @@ async def _migrate_add_admin_flag(conn):
     _log.info("Migration v4_admin_flag complete")
 
 
+async def _migrate_add_job_name(conn):
+    """v5: Add name column to jobs table. Idempotent."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v5_job_name'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+
+    _log.info("Migration v5: job name — starting")
+
+    try:
+        r = await conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'jobs' AND column_name = 'name'"
+        ))
+        if not r.scalar():
+            await conn.execute(text(
+                "ALTER TABLE jobs ADD COLUMN name VARCHAR(255)"
+            ))
+            _log.info("  Added jobs.name column")
+    except Exception:
+        pass
+
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v5_job_name', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v5_job_name complete")
+
+
+async def _migrate_add_job_user_id(conn):
+    """v6: Add user_id FK to jobs table for tracking who launched each job."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v6_job_user_id'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+
+    _log.info("Migration v6: job user_id — starting")
+
+    try:
+        r = await conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'jobs' AND column_name = 'user_id'"
+        ))
+        if not r.scalar():
+            await conn.execute(text(
+                "ALTER TABLE jobs ADD COLUMN user_id VARCHAR(12) REFERENCES users(id) ON DELETE SET NULL"
+            ))
+            _log.info("  Added jobs.user_id column")
+    except Exception:
+        pass
+
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v6_job_user_id', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v6_job_user_id complete")
+
+
+async def _migrate_add_job_config_hash(conn):
+    """v7: Add config_hash column to jobs for duplicate detection."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v7_job_config_hash'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+
+    _log.info("Migration v7: job config_hash — starting")
+
+    try:
+        r = await conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'jobs' AND column_name = 'config_hash'"
+        ))
+        if not r.scalar():
+            await conn.execute(text(
+                "ALTER TABLE jobs ADD COLUMN config_hash VARCHAR(32)"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_jobs_config_hash ON jobs (config_hash)"
+            ))
+            _log.info("  Added jobs.config_hash column with index")
+    except Exception:
+        pass
+
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v7_job_config_hash', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v7_job_config_hash complete")
+
+
+async def _migrate_add_job_disk_size(conn):
+    """v8: Add disk_size_bytes column to jobs for cached disk usage."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v8_job_disk_size'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+
+    _log.info("Migration v8: job disk_size_bytes — starting")
+
+    try:
+        r = await conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'jobs' AND column_name = 'disk_size_bytes'"
+        ))
+        if not r.scalar():
+            await conn.execute(text(
+                "ALTER TABLE jobs ADD COLUMN disk_size_bytes BIGINT"
+            ))
+            _log.info("  Added jobs.disk_size_bytes column")
+    except Exception:
+        pass
+
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v8_job_disk_size', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v8_job_disk_size complete")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown events."""
@@ -478,6 +613,14 @@ async def lifespan(app: FastAPI):
         await _migrate_to_composite_datasets(conn)
     async with engine.begin() as conn:
         await _migrate_add_admin_flag(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_job_name(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_job_user_id(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_job_config_hash(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_job_disk_size(conn)
     _log.info("PredomicsApp started — data_dir=%s", settings.data_dir)
     yield
 

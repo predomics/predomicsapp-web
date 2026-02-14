@@ -1,14 +1,17 @@
 """Analysis execution endpoints — run gpredomics and retrieve results."""
 
 from __future__ import annotations
+import hashlib
+import json
 import logging
 from typing import Optional
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
-from sqlalchemy import select
+from sqlalchemy import select, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from ..core.database import get_db, sync_session_factory
 from ..core.deps import get_current_user, get_project_with_access
@@ -46,6 +49,7 @@ async def run_analysis(
     y_file_id: str,
     xtest_file_id: str = "",
     ytest_file_id: str = "",
+    job_name: str = "",
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = None,
@@ -71,9 +75,18 @@ async def run_analysis(
     if ytest_file_id:
         ytest_path = await _resolve_file(ytest_file_id) or ""
 
+    # Compute config hash for duplicate detection (nulls stripped for stability)
+    config_hash = _compute_config_hash(config.model_dump(), {
+        "x": x_file_id, "y": y_file_id,
+        "xtest": xtest_file_id, "ytest": ytest_file_id,
+    })
+
     # Create job record in database — commit immediately so the background
     # task (which uses a separate sync DB connection) can see the job.
-    job = Job(project_id=project_id, status="pending", config=config.model_dump())
+    job = Job(
+        project_id=project_id, user_id=user.id, name=job_name or None,
+        status="pending", config=config.model_dump(), config_hash=config_hash,
+    )
     db.add(job)
     await db.commit()
 
@@ -94,7 +107,7 @@ async def run_analysis(
     # Run in background thread
     background_tasks.add_task(_run_job, job.id, project_id, param_path)
 
-    return ExperimentSummary(job_id=job.id, status=JobStatus.pending)
+    return ExperimentSummary(job_id=job.id, name=job.name, status=JobStatus.pending)
 
 
 def _run_job(job_id: str, project_id: str, param_path: str) -> None:
@@ -130,6 +143,7 @@ def _run_job(job_id: str, project_id: str, param_path: str) -> None:
                 job.status = "completed"
                 job.results_path = str(results_path)
                 job.completed_at = datetime.now(timezone.utc)
+                job.disk_size_bytes = _job_disk_size(project_id, job_id)
                 db.commit()
             return
 
@@ -163,6 +177,7 @@ def _run_job(job_id: str, project_id: str, param_path: str) -> None:
             job.status = "completed"
             job.results_path = str(results_path)
             job.completed_at = datetime.now(timezone.utc)
+            job.disk_size_bytes = _job_disk_size(project_id, job_id)
             db.commit()
 
         logger.info("Job %s completed", job_id)
@@ -180,6 +195,70 @@ def _run_job(job_id: str, project_id: str, param_path: str) -> None:
             db.commit()
 
         logger.error("Job %s failed: %s", job_id, e)
+
+
+@router.get("/{project_id}/jobs/duplicates")
+async def find_duplicate_jobs(
+    project_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Find groups of jobs with identical config_hash (viewer access).
+
+    Returns a list of duplicate groups, each with the hash and the job summaries.
+    Only groups with 2+ jobs are returned. Within each group the best job
+    (highest AUC, or most recent if no AUC) is marked as ``keep``.
+    Backfills missing config_hash values on-the-fly.
+    """
+    await get_project_with_access(project_id, user, db, require_role="viewer")
+
+    result = await db.execute(
+        select(Job)
+        .options(selectinload(Job.owner))
+        .where(Job.project_id == project_id)
+        .order_by(Job.created_at.desc())
+    )
+    all_jobs = result.scalars().all()
+
+    # Backfill missing config_hash for older jobs
+    dirty = False
+    for j in all_jobs:
+        if j.config_hash is None and j.config:
+            j.config_hash = _compute_config_hash(j.config)
+            dirty = True
+    if dirty:
+        await db.commit()
+
+    # Group by config_hash
+    groups: dict[str, list[Job]] = {}
+    for j in all_jobs:
+        if j.config_hash:
+            groups.setdefault(j.config_hash, []).append(j)
+
+    duplicates = []
+    for h, group_jobs in groups.items():
+        if len(group_jobs) < 2:
+            continue
+        # Pick the best: completed > failed > pending, then highest AUC, then newest
+        def sort_key(j):
+            status_rank = {"completed": 0, "running": 1, "failed": 2, "pending": 3}.get(j.status, 4)
+            auc = 0.0
+            if j.status == "completed":
+                r = storage.get_job_result(project_id, j.id)
+                if r:
+                    auc = r.get("best_individual", {}).get("auc", 0.0) or 0.0
+            return (status_rank, -auc, -(j.created_at.timestamp() if j.created_at else 0))
+        group_jobs.sort(key=sort_key)
+        best_id = group_jobs[0].id
+        duplicates.append({
+            "config_hash": h,
+            "config_summary": _config_summary(group_jobs[0].config),
+            "jobs": [
+                {**_job_to_summary(j).model_dump(), "keep": j.id == best_id}
+                for j in group_jobs
+            ],
+        })
+    return duplicates
 
 
 @router.get("/{project_id}/jobs/{job_id}/logs")
@@ -212,14 +291,20 @@ async def get_job_status(
     db: AsyncSession = Depends(get_db),
 ):
     """Get the status of a running or completed job (viewer access)."""
-    job = await _verify_job_access(project_id, job_id, user, db)
+    await get_project_with_access(project_id, user, db, require_role="viewer")
+    result = await db.execute(
+        select(Job).options(selectinload(Job.owner)).where(Job.id == job_id, Job.project_id == project_id)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
 
     if job.status == "completed" and job.results_path:
         results = storage.get_job_result(project_id, job_id)
         if results:
-            return _results_to_summary(job_id, JobStatus(job.status), results)
+            return _results_to_summary(job, results)
 
-    return ExperimentSummary(job_id=job_id, status=JobStatus(job.status))
+    return _job_to_summary(job)
 
 
 @router.get("/{project_id}/jobs/{job_id}/detail", response_model=ExperimentDetail)
@@ -230,7 +315,7 @@ async def get_job_detail(
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed results of a completed job (viewer access)."""
-    await _verify_job_access(project_id, job_id, user, db)
+    job = await _verify_job_access(project_id, job_id, user, db)
 
     results = storage.get_job_result(project_id, job_id)
     if not results:
@@ -239,6 +324,7 @@ async def get_job_detail(
     best = results.get("best_individual", {})
     return ExperimentDetail(
         job_id=job_id,
+        name=job.name,
         status=JobStatus.completed,
         fold_count=results.get("fold_count", 0),
         generation_count=results.get("generation_count", 0),
@@ -280,26 +366,163 @@ async def list_jobs(
     await get_project_with_access(project_id, user, db, require_role="viewer")
 
     result = await db.execute(
-        select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc())
+        select(Job)
+        .options(selectinload(Job.owner))
+        .where(Job.project_id == project_id)
+        .order_by(Job.created_at.desc())
     )
     jobs = result.scalars().all()
+
+    # Backfill missing config_hash and disk_size_bytes for older jobs
+    dirty = False
+    for j in jobs:
+        if j.config_hash is None and j.config:
+            j.config_hash = _compute_config_hash(j.config)
+            dirty = True
+        if j.disk_size_bytes is None and j.status == "completed":
+            j.disk_size_bytes = _job_disk_size(j.project_id, j.id)
+            dirty = True
+    if dirty:
+        await db.commit()
 
     summaries = []
     for j in jobs:
         if j.status == "completed":
             results = storage.get_job_result(project_id, j.id)
             if results:
-                summaries.append(_results_to_summary(j.id, JobStatus.completed, results))
+                summaries.append(_results_to_summary(j, results))
                 continue
-        summaries.append(ExperimentSummary(job_id=j.id, status=JobStatus(j.status)))
+        summaries.append(_job_to_summary(j))
     return summaries
 
 
-def _results_to_summary(job_id: str, status: JobStatus, results: dict) -> ExperimentSummary:
-    best = results.get("best_individual", {})
+@router.delete("/{project_id}/jobs/{job_id}")
+async def delete_job(
+    project_id: str,
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a job and its results (editor access required)."""
+    await get_project_with_access(project_id, user, db, require_role="editor")
+    job = await _verify_job_access(project_id, job_id, user, db)
+
+    if job.status == "running":
+        raise HTTPException(status_code=409, detail="Cannot delete a running job")
+
+    # Remove results files from disk
+    job_dir = Path(storage.settings.project_dir) / project_id / "jobs" / job_id
+    if job_dir.exists():
+        import shutil
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+    await db.execute(sa_delete(Job).where(Job.id == job_id))
+    await db.commit()
+    return {"detail": "Job deleted"}
+
+
+def _strip_nulls(d):
+    """Recursively remove keys with None values from a dict for stable hashing."""
+    if not isinstance(d, dict):
+        return d
+    return {k: _strip_nulls(v) for k, v in d.items() if v is not None}
+
+
+def _compute_config_hash(config: dict, file_ids: dict | None = None) -> str:
+    """Compute a stable hash for a job configuration.
+
+    Strips null values so that {epsilon: null} and omitted epsilon
+    produce the same hash.  Optionally includes dataset file IDs.
+    """
+    normalized = _strip_nulls(config) if config else {}
+    payload = {"config": normalized}
+    if file_ids:
+        payload.update(file_ids)
+    return hashlib.md5(
+        json.dumps(payload, sort_keys=True).encode()
+    ).hexdigest()[:16]
+
+
+def _config_summary(config: dict | None) -> str:
+    """Build a short human-readable config summary string."""
+    if not config:
+        return ""
+    gen = config.get("general", {})
+    voting = config.get("voting", {})
+    parts = []
+    algo = gen.get("algo", "ga")
+    parts.append(algo.upper())
+    lang = gen.get("language", "")
+    if lang:
+        parts.append(f"lang={lang}")
+    dt = gen.get("data_type", "")
+    if dt:
+        parts.append(f"dt={dt}")
+    ga = config.get("ga", {})
+    pop = ga.get("population_size")
+    if pop:
+        parts.append(f"pop={pop}")
+    epochs = ga.get("max_epochs")
+    if epochs:
+        parts.append(f"ep={epochs}")
+    if voting.get("vote"):
+        parts.append(f"vote={voting.get('method', 'Majority')}")
+    seed = gen.get("seed")
+    if seed is not None:
+        parts.append(f"seed={seed}")
+    return " | ".join(parts)
+
+
+def _job_disk_size(project_id: str, job_id: str) -> int | None:
+    """Compute total size of a job directory on disk (bytes)."""
+    job_dir = Path(storage.settings.project_dir) / project_id / "jobs" / job_id
+    if not job_dir.is_dir():
+        return None
+    total = 0
+    for f in job_dir.rglob("*"):
+        if f.is_file():
+            total += f.stat().st_size
+    return total
+
+
+def _job_to_summary(job: Job) -> ExperimentSummary:
+    """Convert a Job ORM object to an ExperimentSummary (no results loaded)."""
+    config = job.config or {}
+    gen = config.get("general", {})
+    ga = config.get("ga", {})
+    duration = None
+    if job.completed_at and job.created_at:
+        duration = (job.completed_at - job.created_at).total_seconds()
     return ExperimentSummary(
-        job_id=job_id,
-        status=status,
+        job_id=job.id,
+        name=job.name,
+        status=JobStatus(job.status),
+        created_at=job.created_at.isoformat() if job.created_at else None,
+        completed_at=job.completed_at.isoformat() if job.completed_at else None,
+        duration_seconds=duration,
+        config_summary=_config_summary(config),
+        user_name=job.owner.full_name if job.owner and job.owner.full_name else (job.owner.email if job.owner else None),
+        language=gen.get("language"),
+        data_type=gen.get("data_type"),
+        population_size=ga.get("population_size"),
+        config_hash=getattr(job, 'config_hash', None),
+        disk_size_bytes=getattr(job, 'disk_size_bytes', None),
+    )
+
+
+def _results_to_summary(job: Job, results: dict) -> ExperimentSummary:
+    """Convert a completed Job + results dict into a rich ExperimentSummary."""
+    best = results.get("best_individual", {})
+    config = job.config or {}
+    gen = config.get("general", {})
+    ga = config.get("ga", {})
+    duration = None
+    if job.completed_at and job.created_at:
+        duration = (job.completed_at - job.created_at).total_seconds()
+    return ExperimentSummary(
+        job_id=job.id,
+        name=job.name,
+        status=JobStatus.completed,
         fold_count=results.get("fold_count", 0),
         generation_count=results.get("generation_count", 0),
         execution_time=results.get("execution_time", 0),
@@ -307,4 +530,14 @@ def _results_to_summary(job_id: str, status: JobStatus, results: dict) -> Experi
         sample_count=len(results.get("sample_names", [])),
         best_auc=best.get("auc"),
         best_k=best.get("k"),
+        created_at=job.created_at.isoformat() if job.created_at else None,
+        completed_at=job.completed_at.isoformat() if job.completed_at else None,
+        duration_seconds=duration,
+        config_summary=_config_summary(config),
+        user_name=job.owner.full_name if job.owner and job.owner.full_name else (job.owner.email if job.owner else None),
+        language=gen.get("language"),
+        data_type=gen.get("data_type"),
+        population_size=ga.get("population_size"),
+        config_hash=getattr(job, 'config_hash', None),
+        disk_size_bytes=getattr(job, 'disk_size_bytes', None),
     )

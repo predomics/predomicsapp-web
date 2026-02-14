@@ -3,6 +3,7 @@
     class="project-card"
     :class="{ selected, shared: isShared }"
     @click="$emit('select')"
+    @dblclick.stop="$emit('open')"
   >
     <div class="card-top">
       <h4 class="card-name">{{ project.name }}</h4>
@@ -29,7 +30,7 @@ const props = defineProps({
   isShared: { type: Boolean, default: false },
 })
 
-defineEmits(['select'])
+defineEmits(['select', 'open'])
 
 const datasetCount = computed(() => props.project.datasets?.length || 0)
 const jobCount = computed(() => props.project.job_count || props.project.jobs?.length || 0)
