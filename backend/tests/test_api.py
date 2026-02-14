@@ -1506,3 +1506,655 @@ class TestDataExplore:
     async def test_unauthenticated_data_explore_returns_error(self, client):
         resp = await client.get("/api/data-explore/someid/summary")
         assert resp.status_code in (401, 403)
+
+
+# ---------------------------------------------------------------------------
+# Worker parsing functions (pure functions, no I/O)
+# ---------------------------------------------------------------------------
+
+class TestWorkerParsing:
+    """Test pure parsing functions from the worker module."""
+
+    def test_strip_ansi_removes_color_codes(self):
+        from app.services.worker import _strip_ansi
+        text = "\x1b[31mERROR\x1b[0m: something \x1b[1;32mgreen\x1b[0m"
+        assert _strip_ansi(text) == "ERROR: something green"
+
+    def test_strip_ansi_leaves_plain_text_unchanged(self):
+        from app.services.worker import _strip_ansi
+        text = "normal text with no escapes"
+        assert _strip_ansi(text) == text
+
+    def test_parse_jury_returns_none_without_jury_data(self):
+        from app.services.worker import _parse_jury_from_display
+        result = _parse_jury_from_display("no jury info here")
+        assert result is None
+
+    def test_parse_jury_extracts_metrics(self):
+        from app.services.worker import _parse_jury_from_display
+        text = (
+            "Majority jury [50 experts] | AUC 0.950/0.820 | accuracy 0.900/0.780 "
+            "| sensitivity 0.880/0.750 | specificity 0.920/0.810 | rejection rate 0.050/0.100\n"
+        )
+        result = _parse_jury_from_display(text)
+        assert result is not None
+        assert result["method"] == "Majority"
+        assert result["expert_count"] == 50
+        assert result["train"]["auc"] == 0.95
+        assert result["test"]["auc"] == 0.82
+        assert result["train"]["sensitivity"] == 0.88
+        assert result["test"]["rejection_rate"] == 0.1
+
+    def test_parse_jury_extracts_confusion_matrix(self):
+        from app.services.worker import _parse_jury_from_display
+        text = (
+            "Majority jury [10 experts] | AUC 1.000/0.900 | accuracy 1.000/0.850 "
+            "| sensitivity 1.000/0.800 | specificity 1.000/0.900 | rejection rate 0.000/0.050\n"
+            "CONFUSION MATRIX (TRAIN)\n"
+            "         | Pred 1 | Pred 0 | Rejected\n"
+            "Real 1   |     8  |     1  |     1\n"
+            "Real 0   |     2  |     7  |     1\n"
+        )
+        result = _parse_jury_from_display(text)
+        assert result is not None
+        assert "confusion_train" in result
+        cm = result["confusion_train"]
+        assert cm["tp"] == 8
+        assert cm["fn"] == 1
+        assert cm["abstain_1"] == 1
+        assert cm["fp"] == 2
+        assert cm["tn"] == 7
+        assert cm["abstain_0"] == 1
+
+    def test_parse_jury_extracts_sample_predictions(self):
+        from app.services.worker import _parse_jury_from_display
+        text = (
+            "Majority jury [5 experts] | AUC 1.000/0.900 | accuracy 1.000/0.850 "
+            "| sensitivity 1.000/0.800 | specificity 1.000/0.900 | rejection rate 0.000/0.000\n"
+            "  sample1 | 1 | 11111 | bla → 1 | ✓ | 100.0%\n"
+            "  sample2 | 0 | 00010 | bla → 0 | ✓ | 80.0%\n"
+            "  sample3 | 1 | 01010 | bla → 0 | ✗ | 60.0%\n"
+        )
+        result = _parse_jury_from_display(text)
+        assert result is not None
+        preds = result.get("sample_predictions", [])
+        assert len(preds) == 3
+        assert preds[0]["name"] == "sample1"
+        assert preds[0]["real"] == 1
+        assert preds[0]["correct"] is True
+        assert preds[0]["consistency"] == 100.0
+        assert preds[2]["correct"] is False
+        assert preds[2]["consistency"] == 60.0
+
+    def test_parse_jury_builds_vote_matrix(self):
+        from app.services.worker import _parse_jury_from_display
+        text = (
+            "Majority jury [3 experts] | AUC 1.000/0.900 | accuracy 1.000/0.850 "
+            "| sensitivity 1.000/0.800 | specificity 1.000/0.900 | rejection rate 0.000/0.000\n"
+            "  s1 | 1 | 110 | x → 1 | ✓ | 66.7%\n"
+            "  s2 | 0 | 001 | x → 0 | ✓ | 66.7%\n"
+        )
+        result = _parse_jury_from_display(text)
+        assert result is not None
+        vm = result.get("vote_matrix")
+        assert vm is not None
+        assert vm["n_experts"] == 3
+        assert vm["sample_names"] == ["s1", "s2"]
+        assert vm["votes"] == [[1, 1, 0], [0, 0, 1]]
+
+    def test_parse_jury_extracts_fbm(self):
+        from app.services.worker import _parse_jury_from_display
+        text = (
+            "Majority jury [10 experts] | AUC 1.000/0.900 | accuracy 1.000/0.850 "
+            "| sensitivity 1.000/0.800 | specificity 1.000/0.900 | rejection rate 0.000/0.050\n"
+            "FBM mean (n=42) - AUC 0.980/0.850 | accuracy 0.960/0.820 "
+            "| sensitivity 0.940/0.790 | specificity 0.970/0.860\n"
+        )
+        result = _parse_jury_from_display(text)
+        assert result is not None
+        fbm = result.get("fbm")
+        assert fbm is not None
+        assert fbm["count"] == 42
+        assert fbm["train"]["auc"] == 0.98
+        assert fbm["test"]["accuracy"] == 0.82
+
+    def test_parse_importance_returns_none_without_data(self):
+        from app.services.worker import _parse_importance_from_display
+        result = _parse_importance_from_display("no importance data")
+        assert result is None
+
+    def test_parse_importance_extracts_features(self):
+        from app.services.worker import _parse_importance_from_display
+        text = (
+            "Feature importance (MDA, scaled, mean):\n"
+            "  msp_0001  0.0543  +\n"
+            "  msp_0002  0.0321  -\n"
+            "  msp_0003  0.0100  +\n"
+        )
+        result = _parse_importance_from_display(text)
+        assert result is not None
+        assert len(result) == 3
+        assert result[0]["feature"] == "msp_0001"
+        assert result[0]["importance"] == 0.0543
+        assert result[0]["direction"] == "+"
+        assert result[1]["feature"] == "msp_0002"
+        assert result[1]["direction"] == "-"
+
+
+# ---------------------------------------------------------------------------
+# Analysis pure functions
+# ---------------------------------------------------------------------------
+
+class TestAnalysisPureFunctions:
+    """Test pure helper functions from the analysis router."""
+
+    def test_strip_nulls_removes_none_values(self):
+        from app.routers.analysis import _strip_nulls
+        data = {"a": 1, "b": None, "c": {"d": None, "e": 2}}
+        result = _strip_nulls(data)
+        assert result == {"a": 1, "c": {"e": 2}}
+
+    def test_strip_nulls_handles_empty_dict(self):
+        from app.routers.analysis import _strip_nulls
+        assert _strip_nulls({}) == {}
+
+    def test_strip_nulls_handles_non_dict(self):
+        from app.routers.analysis import _strip_nulls
+        assert _strip_nulls("hello") == "hello"
+        assert _strip_nulls(42) == 42
+
+    def test_compute_config_hash_is_stable(self):
+        from app.routers.analysis import _compute_config_hash
+        config = {"general": {"algo": "ga", "language": "bin"}}
+        h1 = _compute_config_hash(config)
+        h2 = _compute_config_hash(config)
+        assert h1 == h2
+        assert len(h1) == 16
+
+    def test_compute_config_hash_ignores_nulls(self):
+        from app.routers.analysis import _compute_config_hash
+        config1 = {"general": {"algo": "ga"}}
+        config2 = {"general": {"algo": "ga", "epsilon": None}}
+        assert _compute_config_hash(config1) == _compute_config_hash(config2)
+
+    def test_compute_config_hash_includes_file_ids(self):
+        from app.routers.analysis import _compute_config_hash
+        config = {"general": {"algo": "ga"}}
+        h1 = _compute_config_hash(config, {"x": "file1", "y": "file2"})
+        h2 = _compute_config_hash(config, {"x": "file1", "y": "file3"})
+        assert h1 != h2
+
+    def test_config_summary_ga(self):
+        from app.routers.analysis import _config_summary
+        config = {
+            "general": {"algo": "ga", "language": "bin,ter", "data_type": "raw", "seed": 42},
+            "ga": {"population_size": 5000, "max_epochs": 200},
+            "voting": {},
+        }
+        summary = _config_summary(config)
+        assert "GA" in summary
+        assert "lang=bin,ter" in summary
+        assert "pop=5000" in summary
+        assert "ep=200" in summary
+        assert "seed=42" in summary
+
+    def test_config_summary_with_vote(self):
+        from app.routers.analysis import _config_summary
+        config = {
+            "general": {"algo": "ga"},
+            "ga": {},
+            "voting": {"vote": True, "method": "Consensus"},
+        }
+        summary = _config_summary(config)
+        assert "vote=Consensus" in summary
+
+    def test_config_summary_empty(self):
+        from app.routers.analysis import _config_summary
+        assert _config_summary(None) == ""
+        assert _config_summary({}) == ""
+
+    def test_job_disk_size_nonexistent_dir(self):
+        from app.routers.analysis import _job_disk_size
+        result = _job_disk_size("nonexistent_project", "nonexistent_job")
+        assert result is None
+
+    def test_job_disk_size_with_files(self, tmp_path):
+        from app.routers.analysis import _job_disk_size
+        # Create a fake job directory with files
+        job_dir = tmp_path / "test_proj" / "jobs" / "test_job"
+        job_dir.mkdir(parents=True)
+        (job_dir / "results.json").write_text('{"test": true}')
+        (job_dir / "console.log").write_text("log data here")
+
+        with patch.object(storage.settings, 'project_dir', tmp_path):
+            result = _job_disk_size("test_proj", "test_job")
+        assert result is not None
+        assert result > 0
+
+
+# ---------------------------------------------------------------------------
+# Analysis endpoints — deeper coverage
+# ---------------------------------------------------------------------------
+
+class TestAnalysisDeep:
+
+    @pytest.mark.asyncio
+    async def test_delete_job(self, auth_client):
+        """Test job deletion removes the job."""
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+        job_id = await _run_mock_analysis(auth_client, pid, x_fid, y_fid)
+        # Delete it
+        resp = await auth_client.delete(f"/api/analysis/{pid}/jobs/{job_id}")
+        assert resp.status_code == 200
+        assert resp.json()["detail"] == "Job deleted"
+        # Verify gone
+        resp2 = await auth_client.get(f"/api/analysis/{pid}/jobs/{job_id}")
+        assert resp2.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_nonexistent_job_returns_404(self, auth_client):
+        pid, _, _ = await _create_project_with_datasets(auth_client)
+        resp = await auth_client.delete(f"/api/analysis/{pid}/jobs/nonexistent_id")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_job_status_returns_summary(self, auth_client):
+        """Test get job status for a completed job returns summary fields."""
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+        job_id = await _run_mock_analysis(auth_client, pid, x_fid, y_fid)
+        resp = await auth_client.get(f"/api/analysis/{pid}/jobs/{job_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["job_id"] == job_id
+        assert data["status"] in ("completed", "pending")
+        assert "config_hash" in data
+        assert "config_summary" in data
+
+    @pytest.mark.asyncio
+    async def test_list_jobs_backfills_config_hash(self, auth_client):
+        """Test that list_jobs backfills config_hash for older jobs."""
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+        job_id = await _run_mock_analysis(auth_client, pid, x_fid, y_fid)
+        resp = await auth_client.get(f"/api/analysis/{pid}/jobs")
+        assert resp.status_code == 200
+        jobs = resp.json()
+        assert len(jobs) >= 1
+        # All completed jobs should have config_hash
+        for j in jobs:
+            if j["status"] == "completed":
+                assert j["config_hash"] is not None
+
+    @pytest.mark.asyncio
+    async def test_find_duplicates(self, auth_client):
+        """Test the find duplicates endpoint."""
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+        await _run_mock_analysis(auth_client, pid, x_fid, y_fid)
+        await _run_mock_analysis(auth_client, pid, x_fid, y_fid)
+        resp = await auth_client.get(f"/api/analysis/{pid}/jobs/duplicates")
+        assert resp.status_code == 200
+        data = resp.json()
+        # Two identical jobs should form a duplicate group
+        assert isinstance(data, list)
+        if len(data) > 0:
+            assert "config_summary" in data[0]
+            assert "jobs" in data[0]
+
+    @pytest.mark.asyncio
+    async def test_run_analysis_with_missing_file_returns_404(self, auth_client):
+        """Test running analysis with invalid file IDs returns 404."""
+        pid, _, _ = await _create_project_with_datasets(auth_client)
+        config = {
+            "general": {"algo": "ga", "language": "bin", "data_type": "raw", "fit": "auc",
+                        "seed": 42, "thread_number": 1, "k_penalty": 0.0001, "cv": False, "gpu": False},
+        }
+        resp = await auth_client.post(
+            f"/api/analysis/{pid}/run",
+            json=config,
+            params={"x_file_id": "nonexistent", "y_file_id": "nonexistent"},
+        )
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_job_detail_returns_features(self, auth_client):
+        """Test that job detail returns feature names and best individual."""
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+        job_id = await _run_mock_analysis(auth_client, pid, x_fid, y_fid)
+        resp = await auth_client.get(f"/api/analysis/{pid}/jobs/{job_id}/detail")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "feature_names" in data
+        assert "best_individual" in data
+
+    @pytest.mark.asyncio
+    async def test_get_job_logs_returns_dict(self, auth_client):
+        """Test that job logs endpoint returns log content."""
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+        job_id = await _run_mock_analysis(auth_client, pid, x_fid, y_fid)
+        resp = await auth_client.get(f"/api/analysis/{pid}/jobs/{job_id}/logs")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "job_id" in data
+        assert "log" in data
+        assert isinstance(data["log"], str)
+
+
+# ---------------------------------------------------------------------------
+# Project endpoints — deeper coverage
+# ---------------------------------------------------------------------------
+
+class TestProjectsDeep:
+
+    @pytest.mark.asyncio
+    async def test_update_project_name(self, auth_client):
+        resp = await auth_client.post("/api/projects/", params={"name": "original"})
+        pid = resp.json()["project_id"]
+        resp2 = await auth_client.patch(f"/api/projects/{pid}", params={"name": "renamed"})
+        assert resp2.status_code == 200
+        assert resp2.json()["name"] == "renamed"
+
+    @pytest.mark.asyncio
+    async def test_update_project_description(self, auth_client):
+        resp = await auth_client.post("/api/projects/", params={"name": "myproj"})
+        pid = resp.json()["project_id"]
+        resp2 = await auth_client.patch(f"/api/projects/{pid}", params={"description": "A new description"})
+        assert resp2.status_code == 200
+        assert resp2.json()["description"] == "A new description"
+
+    @pytest.mark.asyncio
+    async def test_update_nonexistent_project_returns_404(self, auth_client):
+        resp = await auth_client.patch("/api/projects/nonexistent", params={"name": "foo"})
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_project_datasets_list(self, auth_client):
+        """Projects should show their linked datasets."""
+        pid, _, _ = await _create_project_with_datasets(auth_client)
+        resp = await auth_client.get(f"/api/projects/{pid}")
+        assert resp.status_code == 200
+        proj = resp.json()
+        assert len(proj["datasets"]) == 2
+        for ds in proj["datasets"]:
+            assert "id" in ds
+            assert "name" in ds
+            assert "files" in ds
+
+
+# ---------------------------------------------------------------------------
+# Sharing endpoints — deeper coverage
+# ---------------------------------------------------------------------------
+
+class TestSharingDeep:
+
+    async def _setup_two_users(self, client):
+        """Register two users, return (auth_client1, auth_client2, user2_email)."""
+        await client.post("/api/auth/register", json={
+            "email": "owner@test.com", "password": "pass123", "full_name": "Owner",
+        })
+        await client.post("/api/auth/register", json={
+            "email": "viewer@test.com", "password": "pass123", "full_name": "Viewer",
+        })
+        resp1 = await client.post("/api/auth/login", json={"email": "owner@test.com", "password": "pass123"})
+        resp2 = await client.post("/api/auth/login", json={"email": "viewer@test.com", "password": "pass123"})
+        return resp1.json()["access_token"], resp2.json()["access_token"]
+
+    @pytest.mark.asyncio
+    async def test_share_with_invalid_role(self, client):
+        t1, _ = await self._setup_two_users(client)
+        client.headers["Authorization"] = f"Bearer {t1}"
+        resp = await client.post("/api/projects/", params={"name": "proj"})
+        pid = resp.json()["project_id"]
+        resp2 = await client.post(f"/api/projects/{pid}/share", json={"email": "viewer@test.com", "role": "admin"})
+        assert resp2.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_share_with_nonexistent_user(self, client):
+        t1, _ = await self._setup_two_users(client)
+        client.headers["Authorization"] = f"Bearer {t1}"
+        resp = await client.post("/api/projects/", params={"name": "proj"})
+        pid = resp.json()["project_id"]
+        resp2 = await client.post(f"/api/projects/{pid}/share", json={"email": "nobody@test.com", "role": "viewer"})
+        assert resp2.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_share_with_yourself(self, client):
+        t1, _ = await self._setup_two_users(client)
+        client.headers["Authorization"] = f"Bearer {t1}"
+        resp = await client.post("/api/projects/", params={"name": "proj"})
+        pid = resp.json()["project_id"]
+        resp2 = await client.post(f"/api/projects/{pid}/share", json={"email": "owner@test.com", "role": "viewer"})
+        assert resp2.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_share_duplicate_returns_409(self, client):
+        t1, _ = await self._setup_two_users(client)
+        client.headers["Authorization"] = f"Bearer {t1}"
+        resp = await client.post("/api/projects/", params={"name": "proj"})
+        pid = resp.json()["project_id"]
+        await client.post(f"/api/projects/{pid}/share", json={"email": "viewer@test.com", "role": "viewer"})
+        resp2 = await client.post(f"/api/projects/{pid}/share", json={"email": "viewer@test.com", "role": "editor"})
+        assert resp2.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_list_shares(self, client):
+        t1, _ = await self._setup_two_users(client)
+        client.headers["Authorization"] = f"Bearer {t1}"
+        resp = await client.post("/api/projects/", params={"name": "proj"})
+        pid = resp.json()["project_id"]
+        await client.post(f"/api/projects/{pid}/share", json={"email": "viewer@test.com", "role": "viewer"})
+        resp2 = await client.get(f"/api/projects/{pid}/shares")
+        assert resp2.status_code == 200
+        shares = resp2.json()
+        assert len(shares) == 1
+        assert shares[0]["email"] == "viewer@test.com"
+        assert shares[0]["role"] == "viewer"
+
+    @pytest.mark.asyncio
+    async def test_update_share_role(self, client):
+        t1, _ = await self._setup_two_users(client)
+        client.headers["Authorization"] = f"Bearer {t1}"
+        resp = await client.post("/api/projects/", params={"name": "proj"})
+        pid = resp.json()["project_id"]
+        share_resp = await client.post(f"/api/projects/{pid}/share", json={"email": "viewer@test.com", "role": "viewer"})
+        share_id = share_resp.json()["id"]
+        resp2 = await client.put(f"/api/projects/{pid}/shares/{share_id}", json={"email": "viewer@test.com", "role": "editor"})
+        assert resp2.status_code == 200
+        assert resp2.json()["role"] == "editor"
+
+    @pytest.mark.asyncio
+    async def test_update_nonexistent_share_returns_404(self, client):
+        t1, _ = await self._setup_two_users(client)
+        client.headers["Authorization"] = f"Bearer {t1}"
+        resp = await client.post("/api/projects/", params={"name": "proj"})
+        pid = resp.json()["project_id"]
+        resp2 = await client.put(f"/api/projects/{pid}/shares/nonexistent", json={"email": "x@x.com", "role": "viewer"})
+        assert resp2.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_revoke_nonexistent_share_returns_404(self, client):
+        t1, _ = await self._setup_two_users(client)
+        client.headers["Authorization"] = f"Bearer {t1}"
+        resp = await client.post("/api/projects/", params={"name": "proj"})
+        pid = resp.json()["project_id"]
+        resp2 = await client.delete(f"/api/projects/{pid}/shares/nonexistent")
+        assert resp2.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_shared_with_me(self, client):
+        t1, t2 = await self._setup_two_users(client)
+        client.headers["Authorization"] = f"Bearer {t1}"
+        resp = await client.post("/api/projects/", params={"name": "shared_proj"})
+        pid = resp.json()["project_id"]
+        await client.post(f"/api/projects/{pid}/share", json={"email": "viewer@test.com", "role": "viewer"})
+        # Switch to viewer
+        client.headers["Authorization"] = f"Bearer {t2}"
+        resp2 = await client.get("/api/projects/shared-with-me")
+        assert resp2.status_code == 200
+        projects = resp2.json()
+        assert len(projects) >= 1
+        assert projects[0]["name"] == "shared_proj"
+        assert projects[0]["role"] == "viewer"
+
+
+# ---------------------------------------------------------------------------
+# Admin endpoints — deeper coverage
+# ---------------------------------------------------------------------------
+
+class TestAdminDeep:
+
+    async def _make_admin(self, client, db_session):
+        """Register a user, promote to admin via db_session, return auth headers."""
+        from app.models.db_models import User as UserModel
+        from sqlalchemy import update
+        await client.post("/api/auth/register", json={
+            "email": "admin2@test.com", "password": "adminpass", "full_name": "Admin",
+        })
+        await db_session.execute(
+            update(UserModel).where(UserModel.email == "admin2@test.com").values(is_admin=True)
+        )
+        await db_session.commit()
+        resp = await client.post("/api/auth/login", json={"email": "admin2@test.com", "password": "adminpass"})
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    @pytest.mark.asyncio
+    async def test_admin_update_user_active_flag(self, client, db_session):
+        admin_h = await self._make_admin(client, db_session)
+        await client.post("/api/auth/register", json={"email": "target@test.com", "password": "pass", "full_name": "Target"})
+        resp = await client.get("/api/admin/users", headers=admin_h)
+        target = next(u for u in resp.json() if u["email"] == "target@test.com")
+        resp2 = await client.patch(f"/api/admin/users/{target['id']}", json={"is_active": False}, headers=admin_h)
+        assert resp2.status_code == 200
+        assert resp2.json()["is_active"] is False
+
+    @pytest.mark.asyncio
+    async def test_admin_update_user_admin_flag(self, client, db_session):
+        admin_h = await self._make_admin(client, db_session)
+        await client.post("/api/auth/register", json={"email": "target2@test.com", "password": "pass", "full_name": "Target2"})
+        resp = await client.get("/api/admin/users", headers=admin_h)
+        target = next(u for u in resp.json() if u["email"] == "target2@test.com")
+        resp2 = await client.patch(f"/api/admin/users/{target['id']}", json={"is_admin": True}, headers=admin_h)
+        assert resp2.status_code == 200
+        assert resp2.json()["is_admin"] is True
+
+    @pytest.mark.asyncio
+    async def test_admin_delete_user(self, client, db_session):
+        admin_h = await self._make_admin(client, db_session)
+        await client.post("/api/auth/register", json={"email": "todelete@test.com", "password": "pass", "full_name": "ToDelete"})
+        resp = await client.get("/api/admin/users", headers=admin_h)
+        target = next(u for u in resp.json() if u["email"] == "todelete@test.com")
+        resp2 = await client.delete(f"/api/admin/users/{target['id']}", headers=admin_h)
+        assert resp2.status_code == 200
+        assert resp2.json()["status"] == "deleted"
+
+    @pytest.mark.asyncio
+    async def test_admin_delete_nonexistent_user_returns_404(self, client, db_session):
+        admin_h = await self._make_admin(client, db_session)
+        resp = await client.delete("/api/admin/users/nonexistent_id", headers=admin_h)
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_admin_update_nonexistent_user_returns_404(self, client, db_session):
+        admin_h = await self._make_admin(client, db_session)
+        resp = await client.patch("/api/admin/users/nonexistent_id", json={"is_active": False}, headers=admin_h)
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_admin_defaults_get_set(self, client, db_session):
+        admin_h = await self._make_admin(client, db_session)
+        defaults = {"general.language": "bin,ter", "ga.population_size": 3000}
+        resp = await client.put("/api/admin/defaults", json=defaults, headers=admin_h)
+        assert resp.status_code == 200
+        resp2 = await client.get("/api/admin/defaults", headers=admin_h)
+        assert resp2.status_code == 200
+        assert resp2.json()["general.language"] == "bin,ter"
+
+    @pytest.mark.asyncio
+    async def test_admin_defaults_public(self, client, db_session):
+        admin_h = await self._make_admin(client, db_session)
+        defaults = {"general.seed": 123}
+        await client.put("/api/admin/defaults", json=defaults, headers=admin_h)
+        resp = await client.get("/api/admin/defaults/public")
+        assert resp.status_code == 200
+        assert resp.json()["general.seed"] == 123
+
+
+# ---------------------------------------------------------------------------
+# MSP Annotations service
+# ---------------------------------------------------------------------------
+
+class TestMspAnnotations:
+    """Test the MSP annotations cache service."""
+
+    def test_get_annotations_empty_list(self):
+        from app.services.msp_annotations import get_annotations
+        result = get_annotations([])
+        assert result == {}
+
+    def test_get_annotations_non_msp_features(self):
+        from app.services.msp_annotations import get_annotations
+        result = get_annotations(["feature_1", "gene_abc", "otu_123"])
+        assert result == {}
+
+    def test_load_cache_missing_file(self, tmp_path):
+        from app.services import msp_annotations
+        original_file = msp_annotations.CACHE_FILE
+        original_cache = msp_annotations._cache
+        msp_annotations.CACHE_FILE = tmp_path / "nonexistent.json"
+        msp_annotations._cache = None  # Force reload
+        try:
+            result = msp_annotations._load_cache()
+            assert result == {}
+        finally:
+            msp_annotations.CACHE_FILE = original_file
+            msp_annotations._cache = original_cache
+
+    def test_save_and_load_cache(self, tmp_path):
+        from app.services import msp_annotations
+        original_file = msp_annotations.CACHE_FILE
+        original_cache = msp_annotations._cache
+        cache_path = tmp_path / "test_cache.json"
+        msp_annotations.CACHE_FILE = cache_path
+        try:
+            # Set the global _cache and save it
+            msp_annotations._cache = {"msp_0001": {"species": "E. coli"}}
+            msp_annotations._save_cache()
+            assert cache_path.exists()
+            # Reset and reload
+            msp_annotations._cache = None
+            result = msp_annotations._load_cache()
+            assert "msp_0001" in result
+            assert result["msp_0001"]["species"] == "E. coli"
+        finally:
+            msp_annotations.CACHE_FILE = original_file
+            msp_annotations._cache = original_cache
+
+
+# ---------------------------------------------------------------------------
+# Data Analysis service — cache and mock
+# ---------------------------------------------------------------------------
+
+class TestDataAnalysisService:
+    """Test data_analysis service functions."""
+
+    def test_cache_key_is_stable(self):
+        from app.services.data_analysis import _cache_key
+        k1 = _cache_key("/path/x.tsv", "/path/y.tsv", "wilcoxon", 10, 0.05)
+        k2 = _cache_key("/path/x.tsv", "/path/y.tsv", "wilcoxon", 10, 0.05)
+        assert k1 == k2
+
+    def test_cache_key_differs_for_different_params(self):
+        from app.services.data_analysis import _cache_key
+        k1 = _cache_key("/path/x.tsv", "/path/y.tsv", "wilcoxon", 10, 0.05)
+        k2 = _cache_key("/path/x.tsv", "/path/y.tsv", "kruskal", 10, 0.05)
+        assert k1 != k2
+
+    def test_get_cached_returns_none_for_missing(self):
+        from app.services.data_analysis import _get_cached
+        result = _get_cached("nonexistent_key_xyz")
+        assert result is None
+
+    def test_set_and_get_cached(self):
+        from app.services.data_analysis import _set_cached, _get_cached
+        _set_cached("test_key_abc", {"data": 42})
+        result = _get_cached("test_key_abc")
+        assert result is not None
+        assert result["data"] == 42
