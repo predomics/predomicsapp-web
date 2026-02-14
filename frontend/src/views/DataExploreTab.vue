@@ -372,13 +372,14 @@ async function renderClassDistChart() {
   const c = chartColors()
   const labels = Object.keys(summary.value.class_counts)
   const values = Object.values(summary.value.class_counts)
-  const colors = [c.class0, c.class1, c.accent, c.danger].slice(0, labels.length)
+  const colors = [c.class0Alpha, c.class1Alpha, c.accentAlpha, c.class1Alpha].slice(0, labels.length)
+  const borderColors = [c.class0, c.class1, c.accent, c.class1].slice(0, labels.length)
 
   Plotly.newPlot(classDistChartEl.value, [{
     x: labels.map(l => `Class ${l}`),
     y: values,
     type: 'bar',
-    marker: { color: colors },
+    marker: { color: colors, line: { color: borderColors, width: 1.5 } },
     text: values.map(String),
     textposition: 'auto',
   }], chartLayout({

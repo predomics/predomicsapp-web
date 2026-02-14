@@ -28,6 +28,7 @@ Thumbs.db
 # Data & uploads (runtime)
 data/uploads/
 data/projects/
+data/cache/
 backend/data/
 *.db
 

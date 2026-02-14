@@ -22,6 +22,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 RUN pip install --no-cache-dir maturin
 
 WORKDIR /build
+COPY gpredomics/ ./gpredomics/
 COPY gpredomicspy/ ./gpredomicspy/
 RUN cd gpredomicspy && maturin build --release --out /build/wheels
 

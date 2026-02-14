@@ -96,14 +96,19 @@ class Job(Base):
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_id)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     results_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    config_hash: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    disk_size_bytes: Mapped[Optional[int]] = mapped_column(nullable=True)
 
     project: Mapped["Project"] = relationship(back_populates="jobs")
+    owner: Mapped[Optional["User"]] = relationship()
 
 
 class ProjectShare(Base):

@@ -123,7 +123,10 @@
                   :class="[featureRowClass(f), { 'selected-row': plotFeatureNames.includes(f.name) }]"
                   @click="toggleFeature(f)"
                 >
-                  <td class="feature-name-cell">{{ f.name }}</td>
+                  <td class="feature-name-cell" :title="mspAnnotations[f.name]?.species || ''">
+                    {{ f.name }}
+                    <span v-if="mspAnnotations[f.name]?.species" class="species-tag">{{ mspAnnotations[f.name].species.split(' ').length >= 2 ? mspAnnotations[f.name].species.split(' ')[0][0] + '. ' + mspAnnotations[f.name].species.split(' ').slice(1).join(' ') : mspAnnotations[f.name].species }}</span>
+                  </td>
                   <td>{{ f.significance != null ? f.significance.toExponential(2) : '—' }}</td>
                   <td>{{ f.prevalence != null ? f.prevalence.toFixed(1) : '—' }}</td>
                 </tr>
@@ -191,6 +194,7 @@ import { useProjectStore } from '../stores/project'
 import { useDatasetStore } from '../stores/dataset'
 import { useConfigStore } from '../stores/config'
 import { useThemeStore } from '../stores/theme'
+import { useChartTheme } from '../composables/useChartTheme'
 import axios from 'axios'
 import Plotly from 'plotly.js-dist-min'
 
@@ -199,6 +203,7 @@ const store = useProjectStore()
 const dsStore = useDatasetStore()
 const configStore = useConfigStore()
 const themeStore = useThemeStore()
+const { chartColors, chartLayout, featureLabel: _featureLabel } = useChartTheme()
 const cfg = configStore.form
 
 // State
@@ -207,6 +212,7 @@ const summary = ref(null)
 const featureStats = ref(null)
 const abundanceData = ref([])
 const barcodeData = ref(null)
+const mspAnnotations = ref({})
 const vizTab = ref('prevalence')
 
 // Top N features control — shared across all plots
@@ -359,35 +365,8 @@ function setClassLabel(index, value) {
   cfg.data.classes[index] = value
 }
 
-// --- Theme colors ---
-function chartColors() {
-  const dark = themeStore.isDark
-  return {
-    class0: dark ? '#4fc3f7' : '#1565c0',
-    class1: dark ? '#81c784' : '#2e7d32',
-    accent: dark ? '#ce93d8' : '#7b1fa2',
-    grid: dark ? '#3a3a52' : '#e0e0e0',
-    text: dark ? '#d0d0dc' : '#2c3e50',
-    paper: dark ? '#1e1e2e' : '#ffffff',
-    dimmed: dark ? '#555566' : '#b0bec5',
-    danger: dark ? '#ef5350' : '#e53935',
-  }
-}
-
-function chartLayout(overrides = {}) {
-  const c = chartColors()
-  return {
-    margin: { t: 20, b: 50, l: 60, r: 20 },
-    height: 300,
-    font: { family: 'system-ui, sans-serif', size: 12, color: c.text },
-    paper_bgcolor: c.paper,
-    plot_bgcolor: c.paper,
-    xaxis: { gridcolor: c.grid, color: c.text, ...overrides.xaxis },
-    yaxis: { gridcolor: c.grid, color: c.text, ...overrides.yaxis },
-    legend: { font: { color: c.text }, ...overrides.legend },
-    ...overrides,
-  }
-}
+// --- Theme colors (from shared composable) ---
+// chartColors() and chartLayout() imported from useChartTheme
 
 // --- API calls ---
 async function loadSummary() {
@@ -431,6 +410,23 @@ async function loadAbundance() {
   }
 }
 
+async function loadMspAnnotations() {
+  if (!featureStats.value?.features) return
+  const names = featureStats.value.features.map(f => f.name).filter(n => n.startsWith('msp_'))
+  if (names.length === 0) return
+  try {
+    const { data } = await axios.post('/api/data-explore/msp-annotations', { features: names })
+    mspAnnotations.value = data.annotations || {}
+  } catch (e) {
+    console.error('Failed to load MSP annotations:', e)
+  }
+}
+
+/** Get a short display label for a feature: "msp_0069 P. vulgatus" */
+function featureLabel(name) {
+  return _featureLabel(name, mspAnnotations.value)
+}
+
 async function loadBarcodeData() {
   const feats = plotFeatureNames.value
   if (feats.length === 0 || !hasTrainData.value) return
@@ -450,7 +446,7 @@ async function loadAll() {
   try {
     await loadSummary()
     await loadFeatureStats()
-    await Promise.all([loadAbundance(), loadBarcodeData()])
+    await Promise.all([loadAbundance(), loadBarcodeData(), loadMspAnnotations()])
     await nextTick()
     renderCurrentViz()
   } finally {
@@ -526,14 +522,14 @@ async function renderPrevalenceChart() {
   Plotly.newPlot(prevalenceChartEl.value, traces, chartLayout({
     xaxis: { title: { text: 'Prevalence (%)', font: { color: c.text } }, range: [0, 105], gridcolor: c.grid, color: c.text },
     yaxis: {
-      tickvals: features.map((_, i) => i), ticktext: features.map(f => f.name),
+      tickvals: features.map((_, i) => i), ticktext: features.map(f => featureLabel(f.name)),
       range: [nFeat - 0.5, -0.5], automargin: true, color: c.text, fixedrange: true,
     },
     height: Math.max(400, nFeat * 22),
     shapes,
     annotations,
     legend: { orientation: 'h', y: 1.05, font: { color: c.text } },
-    margin: { t: 30, b: 50, l: 120, r: 40 },
+    margin: { t: 30, b: 50, l: 180, r: 40 },
   }), { responsive: true, displayModeBar: false })
 }
 
@@ -556,7 +552,7 @@ async function renderAbundanceChart() {
   const classKeys = [...new Set(features.flatMap(f => Object.keys(f.classes)))].sort()
   const nCls = classKeys.length
   const clsColors = classKeys.map(k => k === '0' ? c.class0 : c.class1)
-  const clsFills = classKeys.map(k => k === '0' ? c.class0 + '44' : c.class1 + '44')
+  const clsFills = classKeys.map(k => k === '0' ? c.class0Alpha : c.class1Alpha)
 
   // ggplot-like layout: numeric y for equal spacing, grouped boxes per class
   const boxH = 0.18 / nCls         // half-height of one box (thin)
@@ -664,14 +660,14 @@ async function renderAbundanceChart() {
   Plotly.newPlot(abundanceChartEl.value, traces, chartLayout({
     xaxis: { title: { text: 'Abundance', font: { color: c.text } }, gridcolor: c.grid, color: c.text },
     yaxis: {
-      tickvals: features.map((_, i) => i), ticktext: features.map(f => f.name),
+      tickvals: features.map((_, i) => i), ticktext: features.map(f => featureLabel(f.name)),
       range: [nFeat - 0.5, -0.5], automargin: true, color: c.text, fixedrange: true,
     },
     height: Math.max(400, nFeat * 22),
     shapes,
     annotations,
     legend: { orientation: 'h', y: 1.05, font: { color: c.text } },
-    margin: { t: 30, b: 50, l: 120, r: 40 },
+    margin: { t: 30, b: 50, l: 180, r: 40 },
   }), { responsive: true, displayModeBar: false })
 }
 
@@ -751,7 +747,7 @@ async function renderBarcodeChart() {
     traces.push({
       z: classZ,
       x: classSamples,
-      y: d.feature_names,
+      y: d.feature_names.map(n => featureLabel(n)),
       type: 'heatmap',
       colorscale,
       zmin: floor, zmax: hi,
@@ -1132,10 +1128,18 @@ input[type="checkbox"] {
 
 .feature-name-cell {
   font-weight: 500;
-  max-width: 140px;
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.species-tag {
+  font-weight: 400;
+  font-style: italic;
+  font-size: 0.65rem;
+  color: var(--text-faint);
+  margin-left: 0.2rem;
 }
 
 .row-class0 { border-left: 3px solid #1565c0; }

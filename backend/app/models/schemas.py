@@ -182,6 +182,7 @@ class PopulationResponse(BaseModel):
 
 class ExperimentSummary(BaseModel):
     job_id: str
+    name: Optional[str] = None
     status: JobStatus
     fold_count: int = 0
     generation_count: int = 0
@@ -190,6 +191,16 @@ class ExperimentSummary(BaseModel):
     sample_count: int = 0
     best_auc: Optional[float] = None
     best_k: Optional[int] = None
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    config_summary: Optional[str] = None
+    user_name: Optional[str] = None
+    language: Optional[str] = None
+    data_type: Optional[str] = None
+    population_size: Optional[int] = None
+    config_hash: Optional[str] = None
+    disk_size_bytes: Optional[int] = None
 
 
 class ExperimentDetail(ExperimentSummary):

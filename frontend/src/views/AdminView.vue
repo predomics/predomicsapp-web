@@ -57,11 +57,52 @@
         </tr>
       </tbody>
     </table>
+
+    <!-- Default Parameters Section -->
+    <h2 class="section-title">Default Parameters</h2>
+    <p class="section-desc">These defaults are applied to all new analysis runs (users can override them).</p>
+
+    <div v-if="defaultsLoading" class="loading">Loading defaults...</div>
+    <div v-else class="defaults-grid">
+      <div v-for="(field, idx) in defaultFields" :key="idx" class="default-field">
+        <label :for="'df-' + idx">{{ field.label }}</label>
+        <select v-if="field.options" :id="'df-' + idx" v-model="defaults[field.key]">
+          <option :value="undefined">— use hardcoded —</option>
+          <option v-for="opt in field.options" :key="opt" :value="opt">{{ opt }}</option>
+        </select>
+        <input
+          v-else-if="field.type === 'number'"
+          :id="'df-' + idx"
+          type="number"
+          v-model.number="defaults[field.key]"
+          :placeholder="field.placeholder || ''"
+        />
+        <select v-else-if="field.type === 'boolean'" :id="'df-' + idx" v-model="defaults[field.key]">
+          <option :value="undefined">— use hardcoded —</option>
+          <option :value="true">Yes</option>
+          <option :value="false">No</option>
+        </select>
+        <input
+          v-else
+          :id="'df-' + idx"
+          type="text"
+          v-model="defaults[field.key]"
+          :placeholder="field.placeholder || ''"
+        />
+      </div>
+    </div>
+    <div class="defaults-actions">
+      <button class="btn-save" @click="saveDefaults" :disabled="defaultsSaving">
+        {{ defaultsSaving ? 'Saving...' : 'Save Defaults' }}
+      </button>
+      <button class="btn-reset" @click="resetDefaults">Reset All</button>
+      <span v-if="defaultsSaved" class="save-ok">Saved!</span>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import axios from 'axios'
 import { useAuthStore } from '../stores/auth'
 
@@ -71,6 +112,66 @@ const currentUser = auth.user
 const users = ref([])
 const loading = ref(true)
 const error = ref('')
+
+// Default parameters
+const defaults = reactive({})
+const defaultsLoading = ref(false)
+const defaultsSaving = ref(false)
+const defaultsSaved = ref(false)
+
+const defaultFields = [
+  { key: 'general.algo', label: 'Algorithm', options: ['ga', 'beam', 'mcmc'] },
+  { key: 'general.language', label: 'Languages', placeholder: 'bin,ter,ratio' },
+  { key: 'general.data_type', label: 'Data Types', placeholder: 'raw,prev' },
+  { key: 'general.fit', label: 'Fitness Function', options: ['auc', 'specificity', 'sensitivity', 'mcc', 'f1_score', 'g_mean'] },
+  { key: 'general.seed', label: 'Random Seed', type: 'number', placeholder: '42' },
+  { key: 'general.thread_number', label: 'Threads', type: 'number', placeholder: '4' },
+  { key: 'ga.population_size', label: 'Population Size', type: 'number', placeholder: '5000' },
+  { key: 'ga.max_epochs', label: 'Max Epochs', type: 'number', placeholder: '200' },
+  { key: 'ga.k_min', label: 'Min Features (k)', type: 'number', placeholder: '1' },
+  { key: 'ga.k_max', label: 'Max Features (k)', type: 'number', placeholder: '200' },
+  { key: 'voting.vote', label: 'Enable Voting', type: 'boolean' },
+  { key: 'importance.compute_importance', label: 'Compute Importance', type: 'boolean' },
+  { key: 'data.holdout_ratio', label: 'Holdout Ratio', type: 'number', placeholder: '0.20' },
+  { key: 'data.feature_minimal_prevalence_pct', label: 'Min Prevalence %', type: 'number', placeholder: '10' },
+]
+
+async function fetchDefaults() {
+  defaultsLoading.value = true
+  try {
+    const { data } = await axios.get('/api/admin/defaults')
+    Object.assign(defaults, data)
+  } catch { /* ignore */ }
+  finally { defaultsLoading.value = false }
+}
+
+async function saveDefaults() {
+  defaultsSaving.value = true
+  defaultsSaved.value = false
+  try {
+    // Strip undefined values
+    const clean = {}
+    for (const [k, v] of Object.entries(defaults)) {
+      if (v !== undefined && v !== '' && v !== null) clean[k] = v
+    }
+    await axios.put('/api/admin/defaults', clean)
+    // Reload to confirm
+    Object.keys(defaults).forEach(k => delete defaults[k])
+    Object.assign(defaults, clean)
+    defaultsSaved.value = true
+    setTimeout(() => { defaultsSaved.value = false }, 3000)
+  } catch (e) {
+    alert('Failed to save defaults: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    defaultsSaving.value = false
+  }
+}
+
+function resetDefaults() {
+  if (!confirm('Reset all default parameters to hardcoded values?')) return
+  Object.keys(defaults).forEach(k => delete defaults[k])
+  saveDefaults()
+}
 
 async function fetchUsers() {
   loading.value = true
@@ -117,7 +218,10 @@ async function deleteUser(u) {
   }
 }
 
-onMounted(fetchUsers)
+onMounted(() => {
+  fetchUsers()
+  fetchDefaults()
+})
 </script>
 
 <style scoped>
@@ -217,5 +321,72 @@ onMounted(fetchUsers)
 .btn-delete:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* Default Parameters Section */
+.section-title {
+  margin-top: 2.5rem;
+  margin-bottom: 0.5rem;
+}
+.section-desc {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+.defaults-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.default-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.default-field label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.default-field input,
+.default-field select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: var(--bg-input);
+  color: var(--text-body);
+}
+.defaults-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+.btn-save {
+  padding: 0.4rem 1.25rem;
+  background: var(--accent);
+  color: var(--accent-text);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.btn-save:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-reset {
+  padding: 0.4rem 1rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.btn-reset:hover { border-color: var(--text-secondary); }
+.save-ok {
+  font-size: 0.85rem;
+  color: var(--success-dark, #2e7d32);
+  font-weight: 500;
 }
 </style>

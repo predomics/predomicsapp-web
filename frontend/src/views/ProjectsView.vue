@@ -40,6 +40,7 @@
         :project="p"
         :selected="store.selectedId === p.project_id"
         @select="store.selectedId = p.project_id"
+        @open="openProject(p.project_id)"
       />
 
       <!-- Shared projects -->
@@ -51,6 +52,7 @@
         :selected="store.selectedId === sp.project_id"
         :is-shared="true"
         @select="store.selectedId = sp.project_id"
+        @open="openProject(sp.project_id)"
       />
 
       <div v-if="loading" class="list-status">Loading...</div>
@@ -64,8 +66,8 @@
       <ProjectDetailPanel
         v-if="selectedProject"
         :project="selectedProject"
-        @open="id => $router.push(`/project/${id}`)"
-        @share="id => $router.push(`/project/${id}`)"
+        @open="openProject"
+        @share="openProject"
         @delete="handleDelete"
       />
       <EmptyState
@@ -145,6 +147,7 @@ async function loadSample(sampleId) {
     const { data } = await axios.post(`/api/samples/${sampleId}/load`)
     await store.fetchAll()
     store.selectedId = data.project_id
+    openProject(data.project_id)
   } catch (e) {
     console.error('Failed to load sample:', e)
   } finally {
@@ -162,6 +165,10 @@ async function createProject() {
   } catch (e) {
     console.error('Failed to create project:', e)
   }
+}
+
+function openProject(id) {
+  router.push(`/project/${id}`)
 }
 
 async function handleDelete(project) {

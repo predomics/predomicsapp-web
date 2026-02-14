@@ -1,6 +1,7 @@
 """Standalone worker script — runs gpredomicspy in a subprocess so stdout is capturable."""
 
 import json
+import re
 import sys
 
 import numpy as np
@@ -110,6 +111,154 @@ def _evaluate_test_per_generation(experiment, param_path):
         return {}
 
 
+def _strip_ansi(text):
+    """Remove ANSI escape codes from text."""
+    return re.sub(r'\x1b\[[0-9;]*m', '', text)
+
+
+def _parse_jury_from_display(display_text):
+    """Parse jury/voting data from display_results() output.
+
+    Returns a dict with jury metrics, confusion matrices, and expert info,
+    or None if no jury data found.
+    """
+    text = _strip_ansi(display_text)
+
+    # Match: "Majority jury [133 experts] | AUC 1.000/0.760 | accuracy ..."
+    jury_match = re.search(
+        r'(Majority|Consensus)\s+jury\s+\[(\d+)\s+experts?\]\s*\|'
+        r'\s*AUC\s+([\d.]+)/([\d.]+)\s*\|'
+        r'\s*accuracy\s+([\d.]+)/([\d.]+)\s*\|'
+        r'\s*sensitivity\s+([\d.]+)/([\d.]+)\s*\|'
+        r'\s*specificity\s+([\d.]+)/([\d.]+)\s*\|'
+        r'\s*rejection rate\s+([\d.]+)/([\d.]+)',
+        text
+    )
+    if not jury_match:
+        return None
+
+    jury = {
+        "method": jury_match.group(1),
+        "expert_count": int(jury_match.group(2)),
+        "train": {
+            "auc": float(jury_match.group(3)),
+            "accuracy": float(jury_match.group(5)),
+            "sensitivity": float(jury_match.group(7)),
+            "specificity": float(jury_match.group(9)),
+            "rejection_rate": float(jury_match.group(11)),
+        },
+        "test": {
+            "auc": float(jury_match.group(4)),
+            "accuracy": float(jury_match.group(6)),
+            "sensitivity": float(jury_match.group(8)),
+            "specificity": float(jury_match.group(10)),
+            "rejection_rate": float(jury_match.group(12)),
+        },
+    }
+
+    # Parse confusion matrices
+    for label, key in [("TRAIN", "confusion_train"), ("TEST", "confusion_test")]:
+        cm_match = re.search(
+            rf'CONFUSION MATRIX \({label}\).*?'
+            r'Real 1\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+).*?'
+            r'Real 0\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)',
+            text, re.DOTALL
+        )
+        if cm_match:
+            jury[key] = {
+                "tp": int(cm_match.group(1)),
+                "fn": int(cm_match.group(2)),
+                "abstain_1": int(cm_match.group(3)),
+                "fp": int(cm_match.group(4)),
+                "tn": int(cm_match.group(5)),
+                "abstain_0": int(cm_match.group(6)),
+            }
+
+    # Parse FBM mean stats
+    fbm_match = re.search(
+        r'FBM mean \(n=(\d+)\)\s*-\s*AUC\s+([\d.]+)/([\d.]+)\s*\|'
+        r'\s*accuracy\s+([\d.]+)/([\d.]+)\s*\|'
+        r'\s*sensitivity\s+([\d.]+)/([\d.]+)\s*\|'
+        r'\s*specificity\s+([\d.]+)/([\d.]+)',
+        text
+    )
+    if fbm_match:
+        jury["fbm"] = {
+            "count": int(fbm_match.group(1)),
+            "train": {
+                "auc": float(fbm_match.group(2)),
+                "accuracy": float(fbm_match.group(4)),
+                "sensitivity": float(fbm_match.group(6)),
+                "specificity": float(fbm_match.group(8)),
+            },
+            "test": {
+                "auc": float(fbm_match.group(3)),
+                "accuracy": float(fbm_match.group(5)),
+                "sensitivity": float(fbm_match.group(7)),
+                "specificity": float(fbm_match.group(9)),
+            },
+        }
+
+    # Parse per-sample predictions (including vote strings for heatmap)
+    samples = []
+    vote_strings = []
+    for m in re.finditer(
+        r'^\s*(\S+)\s*\|\s*(\d)\s*\|\s*([01]+)\s*.*?→\s*(\d)\s*\|\s*(✓|✗)\s*\|\s*([\d.]+)%',
+        text, re.MULTILINE
+    ):
+        vote_str = m.group(3)
+        samples.append({
+            "name": m.group(1),
+            "real": int(m.group(2)),
+            "votes": vote_str,
+            "predicted": int(m.group(4)),
+            "correct": m.group(5) == "✓",
+            "consistency": float(m.group(6)),
+        })
+        vote_strings.append(vote_str)
+    if samples:
+        jury["sample_predictions"] = samples
+        # Build vote matrix: rows=samples, columns=experts, values=0/1
+        if vote_strings and all(len(v) == len(vote_strings[0]) for v in vote_strings):
+            jury["vote_matrix"] = {
+                "sample_names": [s["name"] for s in samples],
+                "real_classes": [s["real"] for s in samples],
+                "votes": [[int(c) for c in v] for v in vote_strings],
+                "n_experts": len(vote_strings[0]),
+            }
+
+    return jury
+
+
+def _parse_importance_from_display(display_text):
+    """Parse feature importance from display_results() output.
+
+    Returns a list of {feature, importance, direction} dicts, or None.
+    """
+    text = _strip_ansi(display_text)
+
+    # Look for importance section — format varies, try common patterns
+    # Typical: "Feature importance (MDA, scaled, mean):"
+    # Then lines like: "  msp_0069  0.0234  +"
+    imp_section = re.search(r'(?:Feature importance|IMPORTANCE).*?\n((?:\s+\S+\s+[\d.e+-]+.*\n)+)', text, re.IGNORECASE)
+    if not imp_section:
+        return None
+
+    items = []
+    for line in imp_section.group(1).strip().split('\n'):
+        parts = line.split()
+        if len(parts) >= 2:
+            try:
+                items.append({
+                    "feature": parts[0],
+                    "importance": float(parts[1]),
+                    "direction": parts[2] if len(parts) > 2 else "",
+                })
+            except ValueError:
+                continue
+    return items if items else None
+
+
 def main():
     param_path = sys.argv[1]
     results_path = sys.argv[2]
@@ -121,7 +270,11 @@ def main():
 
     param = gpredomicspy.Param()
     param.load(param_path)
+
+    print("[worker] Starting gpredomics fit...", flush=True)
+    print("[worker] Note: if importance computation is enabled, it may take several minutes for large populations.", flush=True)
     experiment = gpredomicspy.fit(param)
+    print("[worker] Fit complete.", flush=True)
 
     # Extract results
     best_pop = experiment.best_population()
@@ -200,13 +353,124 @@ def main():
 
     print(f"\n[worker] Results saved to {results_path}")
 
+    # Extract jury data directly from gpredomics objects (preferred)
+    enriched = False
+    try:
+        if experiment.has_jury():
+            jury_metrics = dict(experiment.get_jury_metrics())
+            jury_data = {
+                "method": jury_metrics.get("method", "Majority"),
+                "expert_count": jury_metrics.get("expert_count", 0),
+                "train": {
+                    "auc": jury_metrics.get("auc", 0.0),
+                    "accuracy": jury_metrics.get("accuracy", 0.0),
+                    "sensitivity": jury_metrics.get("sensitivity", 0.0),
+                    "specificity": jury_metrics.get("specificity", 0.0),
+                    "rejection_rate": jury_metrics.get("rejection_rate", 0.0),
+                },
+            }
+
+            # Get vote matrix from training data
+            try:
+                vm = dict(experiment.get_vote_matrix())
+                jury_data["vote_matrix"] = {
+                    "sample_names": list(vm["sample_names"]),
+                    "real_classes": [int(c) for c in vm["real_classes"]],
+                    "votes": [[int(v) for v in row] for row in vm["votes"]],
+                    "n_experts": int(vm["n_experts"]),
+                    "expert_aucs": [float(a) for a in vm["expert_aucs"]],
+                }
+
+                # Build per-sample predictions from vote matrix
+                sample_predictions = []
+                predicted = jury_metrics.get("predicted_classes", [])
+                for i, name in enumerate(vm["sample_names"]):
+                    real = int(vm["real_classes"][i])
+                    pred = int(predicted[i]) if i < len(predicted) else 2
+                    votes_row = [int(v) for v in vm["votes"][i]]
+                    n_pos = sum(1 for v in votes_row if v == 1)
+                    n_total = sum(1 for v in votes_row if v != 2)
+                    consistency = (n_pos / n_total * 100) if n_total > 0 else 0
+                    # Convert vote row to string
+                    vote_str = "".join(str(v) for v in votes_row if v != 2)
+                    sample_predictions.append({
+                        "name": name,
+                        "real": real,
+                        "votes": vote_str,
+                        "predicted": pred,
+                        "correct": real == pred,
+                        "consistency": round(consistency, 1),
+                    })
+                jury_data["sample_predictions"] = sample_predictions
+                print(f"[worker] Extracted vote matrix: {vm['n_experts']} experts × {len(vm['sample_names'])} samples")
+            except Exception as e:
+                print(f"[worker] Warning: vote matrix extraction failed: {e}")
+
+            # Get test vote matrix if available
+            try:
+                vm_test = dict(experiment.get_vote_matrix_test())
+                jury_data["vote_matrix_test"] = {
+                    "sample_names": list(vm_test["sample_names"]),
+                    "real_classes": [int(c) for c in vm_test["real_classes"]],
+                    "votes": [[int(v) for v in row] for row in vm_test["votes"]],
+                    "n_experts": int(vm_test["n_experts"]),
+                    "expert_aucs": [float(a) for a in vm_test["expert_aucs"]],
+                }
+                # Compute test metrics via jury predict
+                jury_data["test"] = {}
+                print(f"[worker] Extracted test vote matrix: {vm_test['n_experts']} experts × {len(vm_test['sample_names'])} samples")
+            except Exception:
+                pass  # No test data available
+
+            results["jury"] = jury_data
+            enriched = True
+            print(f"[worker] Extracted jury data: {jury_data['method']} with {jury_data['expert_count']} experts")
+    except Exception as e:
+        print(f"[worker] Warning: direct jury extraction failed: {e}")
+
     # Print full experiment results (population, importance, voting/jury)
     # PanicException inherits from BaseException, not Exception
     try:
         display_output = experiment.display_results()
         print(display_output)
+
+        # If jury wasn't extracted via objects, fall back to text parsing
+        if "jury" not in results:
+            jury_data = _parse_jury_from_display(display_output)
+            if jury_data:
+                results["jury"] = jury_data
+                enriched = True
+                print(f"[worker] Parsed jury data (fallback): {jury_data['method']} with {jury_data['expert_count']} experts")
+        else:
+            # Enrich with test metrics from display text if not already present
+            parsed = _parse_jury_from_display(display_output)
+            if parsed and "test" in parsed:
+                results["jury"]["test"] = parsed["test"]
+            if parsed and "confusion_train" in parsed:
+                results["jury"]["confusion_train"] = parsed["confusion_train"]
+            if parsed and "confusion_test" in parsed:
+                results["jury"]["confusion_test"] = parsed["confusion_test"]
+            if parsed and "fbm" in parsed:
+                results["jury"]["fbm"] = parsed["fbm"]
+
+        importance_data = _parse_importance_from_display(display_output)
+        if importance_data:
+            results["importance"] = importance_data
+            enriched = True
+            print(f"[worker] Parsed importance data: {len(importance_data)} features")
+
+        if enriched:
+            with open(results_path, "w") as f:
+                json.dump(results, f, indent=2, default=str)
+            print("[worker] Results re-saved with jury/importance data")
+
     except BaseException as e:
         print(f"[worker] Warning: display_results() failed: {e}")
+        # Still try to save if jury was extracted via objects
+        if enriched:
+            with open(results_path, "w") as f:
+                json.dump(results, f, indent=2, default=str)
+            print("[worker] Results saved with jury data (display failed)")
 
 
 if __name__ == "__main__":

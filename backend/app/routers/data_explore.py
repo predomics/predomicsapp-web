@@ -9,6 +9,7 @@ from ..core.database import get_db
 from ..core.deps import get_current_user, get_project_with_access
 from ..models.db_models import User, Project
 from ..services import data_analysis
+from ..services import msp_annotations
 
 router = APIRouter(prefix="/data-explore", tags=["data-explore"])
 
@@ -159,3 +160,20 @@ async def get_barcode_data(
         x_path, y_path, feature_list, max_samples=max_samples
     )
     return barcode
+
+
+@router.post("/msp-annotations")
+async def get_msp_annotations(
+    body: dict,
+    user: User = Depends(get_current_user),
+):
+    """Look up MSP taxonomic annotations for a list of feature names.
+
+    Fetches from biobanks.gmt.bio with local caching.
+    Body: {"features": ["msp_0001", "msp_0069", ...]}
+    """
+    feature_names = body.get("features", [])
+    if not feature_names or not isinstance(feature_names, list):
+        raise HTTPException(400, "Provide a 'features' list")
+    annotations = msp_annotations.get_annotations(feature_names[:500])
+    return {"annotations": annotations}

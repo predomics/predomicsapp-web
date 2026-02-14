@@ -3,8 +3,30 @@
     <!-- Header -->
     <div class="detail-header">
       <div class="header-info">
-        <h2>{{ project.name }}</h2>
-        <p v-if="project.description" class="desc">{{ project.description }}</p>
+        <div class="name-row">
+          <h2 v-if="!editing" @dblclick="startEdit">{{ project.name }}</h2>
+          <input
+            v-else
+            ref="nameInput"
+            v-model="editName"
+            class="name-edit"
+            @keyup.enter="saveEdit"
+            @keyup.escape="cancelEdit"
+            @blur="saveEdit"
+          />
+          <button v-if="!editing" class="btn-icon-sm" @click="startEdit" title="Rename">&#9998;</button>
+        </div>
+        <p v-if="!editingDesc && project.description" class="desc" @dblclick="startDescEdit">{{ project.description }}</p>
+        <p v-if="!editingDesc && !project.description" class="desc desc-placeholder" @dblclick="startDescEdit">Add a description...</p>
+        <textarea
+          v-if="editingDesc"
+          v-model="editDesc"
+          class="desc-edit"
+          rows="2"
+          @keyup.escape="cancelDescEdit"
+          @blur="saveDescEdit"
+          placeholder="Project description..."
+        ></textarea>
         <div class="dates">
           <span>Created {{ formatDate(project.created_at) }}</span>
           <span v-if="project.updated_at"> &middot; Modified {{ relativeDate(project.updated_at) }}</span>
@@ -51,7 +73,7 @@
     <section v-if="project.jobs?.length > 0" class="detail-section">
       <h3>Recent Jobs</h3>
       <div class="job-list">
-        <div v-for="jobId in project.jobs.slice(0, 5)" :key="jobId" class="job-row">
+        <div v-for="jobId in recentJobs" :key="jobId" class="job-row">
           <span class="job-id">{{ jobId.slice(0, 8) }}</span>
         </div>
       </div>
@@ -60,11 +82,70 @@
 </template>
 
 <script setup>
-defineProps({
+import { ref, computed, nextTick } from 'vue'
+import { useProjectStore } from '../../stores/project'
+
+const props = defineProps({
   project: { type: Object, default: null },
 })
 
 defineEmits(['open', 'share', 'delete'])
+
+const store = useProjectStore()
+
+const editing = ref(false)
+const editName = ref('')
+const nameInput = ref(null)
+const editingDesc = ref(false)
+const editDesc = ref('')
+
+const recentJobs = computed(() => {
+  const jobs = props.project?.jobs || []
+  return jobs.slice(0, 5).map(j => typeof j === 'string' ? j : j.job_id || j.id || '')
+})
+
+function startEdit() {
+  editName.value = props.project.name
+  editing.value = true
+  nextTick(() => nameInput.value?.focus())
+}
+
+function cancelEdit() {
+  editing.value = false
+}
+
+async function saveEdit() {
+  if (!editing.value) return
+  editing.value = false
+  const newName = editName.value.trim()
+  if (!newName || newName === props.project.name) return
+  try {
+    await store.updateProject(props.project.project_id, { name: newName })
+  } catch (e) {
+    alert('Rename failed: ' + (e.response?.data?.detail || e.message))
+  }
+}
+
+function startDescEdit() {
+  editDesc.value = props.project.description || ''
+  editingDesc.value = true
+}
+
+function cancelDescEdit() {
+  editingDesc.value = false
+}
+
+async function saveDescEdit() {
+  if (!editingDesc.value) return
+  editingDesc.value = false
+  const newDesc = editDesc.value.trim()
+  if (newDesc === (props.project.description || '')) return
+  try {
+    await store.updateProject(props.project.project_id, { description: newDesc })
+  } catch (e) {
+    alert('Update failed: ' + (e.response?.data?.detail || e.message))
+  }
+}
 
 function formatDate(iso) {
   if (!iso) return ''
@@ -100,15 +181,71 @@ function relativeDate(iso) {
   margin-bottom: 1.5rem;
 }
 
+.name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .header-info h2 {
   font-size: 1.4rem;
   color: var(--text-primary);
   margin: 0 0 0.25rem;
+  cursor: default;
+}
+
+.name-edit {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  border: 1px solid var(--brand);
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  background: var(--bg-input);
+  outline: none;
+  width: 100%;
+}
+
+.btn-icon-sm {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.btn-icon-sm:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.05));
+  color: var(--text-secondary);
 }
 
 .desc {
   font-size: 0.85rem;
   color: var(--text-secondary);
+  margin-bottom: 0.25rem;
+  cursor: default;
+}
+.desc-placeholder {
+  color: var(--text-faint);
+  font-style: italic;
+  cursor: pointer;
+}
+.desc-edit {
+  font-size: 0.85rem;
+  color: var(--text-body);
+  border: 1px solid var(--brand);
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  background: var(--bg-input);
+  width: 100%;
+  resize: vertical;
+  outline: none;
   margin-bottom: 0.25rem;
 }
 

@@ -1,6 +1,7 @@
 """gpredomicspy engine wrapper — bridges FastAPI with the Rust-backed ML engine."""
 
 from __future__ import annotations
+import json
 import logging
 import tempfile
 from pathlib import Path
@@ -10,7 +11,47 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from ..core.config import settings as app_settings
+
 logger = logging.getLogger(__name__)
+
+ADMIN_DEFAULTS_PATH = Path(app_settings.data_dir) / "admin_defaults.json"
+
+
+def _load_admin_defaults() -> dict:
+    """Load admin defaults from disk. Returns flat dict like {"general.language": "bin"}."""
+    if ADMIN_DEFAULTS_PATH.exists():
+        try:
+            return json.loads(ADMIN_DEFAULTS_PATH.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
+def _apply_admin_defaults(config: dict) -> dict:
+    """Apply admin default overrides to a config dict.
+
+    Admin defaults are stored as flat keys like "general.language" -> "bin,ter".
+    They override hardcoded defaults but are themselves overridden by user values.
+    """
+    admin = _load_admin_defaults()
+    if not admin:
+        return config
+    result = {}
+    for key, value in config.items():
+        if isinstance(value, dict):
+            section = dict(value)
+            for akey, aval in admin.items():
+                parts = akey.split(".", 1)
+                if len(parts) == 2 and parts[0] == key:
+                    field = parts[1]
+                    # Only apply if user hasn't explicitly set a non-default value
+                    if field not in section or section[field] is None:
+                        section[field] = aval
+            result[key] = section
+        else:
+            result[key] = value
+    return result
 
 # Try to import gpredomicspy — it may not be installed yet
 try:
@@ -36,16 +77,29 @@ def write_param_yaml(
 ) -> str:
     """Write a gpredomics param.yaml from API config dict.
 
+    Merge order: hardcoded defaults ← admin defaults ← user config.
     Returns the path to the generated YAML file.
     """
+    # Load admin defaults (flat keys like "general.language" -> "bin")
+    admin_defaults = _load_admin_defaults()
+
     # model_dump() may leave Pydantic Enums — convert to plain values
     def _plain(d):
         return {k: (v.value if hasattr(v, "value") else v) for k, v in d.items()}
 
+    def _admin_section(section_key):
+        """Extract admin defaults for a given section."""
+        out = {}
+        for akey, aval in admin_defaults.items():
+            parts = akey.split(".", 1)
+            if len(parts) == 2 and parts[0] == section_key:
+                out[parts[1]] = aval
+        return out
+
     def _merge(section_key, defaults):
-        """Merge user-provided values over defaults, stripping None values."""
+        """Merge: hardcoded defaults ← admin defaults ← user values, stripping None."""
         user = _plain(config.get(section_key, {}))
-        merged = {**defaults}
+        merged = {**defaults, **_admin_section(section_key)}
         for k, v in user.items():
             if v is not None:
                 merged[k] = v
