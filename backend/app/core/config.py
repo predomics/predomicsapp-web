@@ -34,6 +34,22 @@ class Settings(BaseSettings):
     # CORS (for Vue.js dev server)
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
+    # SMTP (optional — password reset works without email configured)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_tls: bool = True
+    frontend_url: str = "http://localhost:5173"
+
+    # Rate limiting
+    rate_limit_enabled: bool = True
+    rate_limit_auth: str = "10/minute"
+    rate_limit_api: str = "100/minute"
+    rate_limit_upload: str = "20/minute"
+    rate_limit_admin: str = "30/minute"
+
     model_config = {"env_prefix": "PREDOMICS_"}
 
 

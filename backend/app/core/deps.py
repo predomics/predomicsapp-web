@@ -1,39 +1,56 @@
 """Shared FastAPI dependencies."""
 
-from fastapi import Depends, HTTPException, status
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from .database import get_db
-from .security import decode_access_token
-from ..models.db_models import User, Project, ProjectShare
+from .security import decode_access_token, verify_password
+from ..models.db_models import User, Project, ProjectShare, ApiKey
 
-bearer_scheme = HTTPBearer()
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    x_api_key: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Extract and validate JWT, return the User ORM object."""
-    user_id = decode_access_token(credentials.credentials)
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        )
+    """Extract and validate JWT or API key, return the User ORM object."""
+    # Try JWT first
+    if credentials:
+        user_id = decode_access_token(credentials.credentials)
+        if user_id:
+            result = await db.execute(
+                select(User).where(User.id == user_id, User.is_active.is_(True))
+            )
+            user = result.scalar_one_or_none()
+            if user:
+                return user
 
-    result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active.is_(True))
-    )
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
+    # Try API key
+    if x_api_key:
+        result = await db.execute(
+            select(ApiKey)
+            .where(ApiKey.is_active.is_(True))
+            .options(selectinload(ApiKey.user))
         )
-    return user
+        keys = result.scalars().all()
+        for key in keys:
+            if verify_password(x_api_key, key.key_hash):
+                if key.user and key.user.is_active:
+                    key.last_used_at = datetime.now(timezone.utc)
+                    return key.user
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired token",
+    )
 
 
 async def get_admin_user(

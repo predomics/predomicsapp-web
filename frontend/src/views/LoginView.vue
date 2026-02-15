@@ -26,6 +26,7 @@
         <button type="submit" class="btn-primary" :disabled="loading">
           {{ loading ? 'Please wait...' : (mode === 'login' ? 'Login' : 'Create Account') }}
         </button>
+        <router-link v-if="mode === 'login'" to="/forgot-password" class="forgot-link">Forgot password?</router-link>
       </form>
     </div>
   </div>
@@ -175,5 +176,17 @@ async function submit() {
 .btn-primary:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.forgot-link {
+  display: block;
+  text-align: center;
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.forgot-link:hover {
+  color: var(--accent);
 }
 </style>

@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from ..core.database import get_db
 from ..core.deps import get_current_user, get_project_with_access
 from ..models.db_models import User, Project, ProjectShare
+from ..services import audit
 
 router = APIRouter(prefix="/projects", tags=["sharing"])
 
@@ -66,6 +67,7 @@ async def share_project(
     )
     db.add(share)
     await db.flush()
+    await audit.log_action(db, user, audit.ACTION_SHARE_CREATE, "project", project_id, details={"email": target.email, "role": body.role})
 
     return ShareResponse(
         id=share.id,
@@ -147,6 +149,7 @@ async def revoke_share(
     if not share:
         raise HTTPException(status_code=404, detail="Share not found")
 
+    await audit.log_action(db, user, audit.ACTION_SHARE_REVOKE, "project", project_id)
     await db.delete(share)
     return {"status": "revoked"}
 

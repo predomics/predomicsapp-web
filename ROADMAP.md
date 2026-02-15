@@ -213,3 +213,95 @@ Structured error responses and user-facing notifications.
 - Toast notification system: composable + ToastContainer component
 - Axios response interceptor for global error display
 - Exponential backoff retry utility for transient failures
+
+---
+
+## Phase 3: Security, Integrations & Data Management
+
+### 19. Feature Importance Visualization ✅
+**Priority:** HIGH | **Effort:** Low | **Status:** Done
+
+Richer charts in the Best Model sub-tab for exploring feature contributions.
+
+- Coefficient direction chart: horizontal bars colored by sign (green=positive, red=negative)
+- Feature contribution waterfall: cumulative sorted contributions using Plotly waterfall trace
+- Per-sample contribution heatmap: button-triggered, computes coefficient × feature values matrix
+- All data sourced from existing results JSON — no backend changes needed
+
+### 20. Project Templates ✅
+**Priority:** MEDIUM | **Effort:** Low | **Status:** Done
+
+Admin-managed parameter presets available to all users.
+
+- File-based JSON storage at `data/templates.json` (same pattern as admin defaults)
+- CRUD endpoints: GET/POST/PUT/DELETE + public GET (no auth)
+- Admin UI: create/delete templates from current default config
+- Parameters tab: "Load Template" dropdown applies preset config values
+
+### 21. Audit Log ✅
+**Priority:** HIGH | **Effort:** Medium | **Status:** Done
+
+Track all user actions with timestamps, queryable by admins.
+
+- `AuditLog` model: user_id, action, resource_type, resource_id, details (JSON), ip_address
+- 14 action constants: login, register, job.launch/delete, dataset.upload/delete, project.create/delete, share.create/revoke, admin operations
+- Instrumented across 6 routers (auth, analysis, datasets, projects, sharing, admin)
+- Admin UI: paginated audit log table with action filter
+- Migration v11
+
+### 22. Password Reset & Email ✅
+**Priority:** HIGH | **Effort:** Medium | **Status:** Done
+
+Self-service password reset with optional SMTP email delivery.
+
+- `PasswordResetToken` model with bcrypt-hashed tokens and 1-hour expiry
+- `email_verified` field on User model (migration v12)
+- aiosmtplib integration (optional dep — graceful ImportError handling)
+- Dev mode: returns reset token directly when no SMTP configured
+- Frontend: ForgotPasswordView + ResetPasswordView with router guard
+- Admin: direct password reset for any user
+
+### 23. API Key Management ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
+
+Programmatic access via API keys as alternative to JWT Bearer tokens.
+
+- `ApiKey` model with bcrypt-hashed keys, 8-char prefix, last_used_at tracking
+- Keys shown only once on creation
+- Dual auth: `get_current_user` accepts both `Authorization: Bearer` and `X-API-Key` header
+- Frontend: create/list/revoke API keys in Profile view
+- Migration v13
+
+### 24. Webhook Notifications ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
+
+HTTP POST callbacks to external URLs when jobs complete or fail.
+
+- `Webhook` model with HMAC-SHA256 signing via secret
+- Delivery with configurable retries and exponential backoff (httpx)
+- CRUD + test endpoint (send test payload)
+- Fired from background job runner on completion/failure
+- Frontend: create/list/delete/test webhooks in Profile view
+- Migration v14
+
+### 25. Dataset Versioning ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
+
+Automatic snapshots on file changes with restore capability.
+
+- `DatasetVersion` model: version_number, files_snapshot (JSON), created_by, note
+- Auto-snapshot on file upload and file delete
+- Version history endpoint with restore to any previous version
+- Frontend: "History" button per dataset with version list and restore
+- Migration v15
+
+### 26. Rate Limiting ✅
+**Priority:** HIGH | **Effort:** Low | **Status:** Done
+
+Per-user and per-IP rate limits using slowapi (in-memory, no Redis required).
+
+- User-or-IP key extraction from JWT, API key prefix, or client IP
+- Configurable limits: auth (10/min), API (100/min), upload (20/min), admin (30/min)
+- Limiter decorators on auth, upload, and admin endpoints
+- 429 toast handling in frontend Axios interceptor
+- Global enable/disable via config setting

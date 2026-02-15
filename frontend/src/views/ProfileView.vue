@@ -49,6 +49,71 @@
       <span v-if="prefMsg" class="msg success">{{ prefMsg }}</span>
     </section>
 
+    <!-- API Keys Section -->
+    <section class="card">
+      <h3>API Keys</h3>
+      <p class="card-desc">Generate API keys for programmatic access. Keys are shown only once on creation.</p>
+
+      <div class="api-key-create">
+        <input v-model="apiKeyName" placeholder="Key name (e.g. CI pipeline)" class="form-input" @keyup.enter="createApiKey" />
+        <button class="btn btn-primary" @click="createApiKey" :disabled="!apiKeyName.trim() || creatingKey">
+          {{ creatingKey ? 'Creating...' : 'Create Key' }}
+        </button>
+      </div>
+
+      <div v-if="newKeySecret" class="new-key-alert">
+        <strong>Copy this key now — it won't be shown again:</strong>
+        <code>{{ newKeySecret }}</code>
+      </div>
+
+      <div v-if="apiKeys.length > 0" class="key-list">
+        <div v-for="k in apiKeys" :key="k.id" class="key-row">
+          <div>
+            <span class="key-name">{{ k.name }}</span>
+            <span class="key-prefix">{{ k.prefix }}...</span>
+            <span v-if="k.last_used_at" class="key-used">Last used: {{ new Date(k.last_used_at).toLocaleDateString() }}</span>
+          </div>
+          <button class="btn-danger-sm" @click="revokeApiKey(k)">Revoke</button>
+        </div>
+      </div>
+      <div v-else class="empty-hint">No API keys yet.</div>
+    </section>
+
+    <!-- Webhooks Section -->
+    <section class="card">
+      <h3>Webhooks</h3>
+      <p class="card-desc">Receive HTTP POST notifications when jobs complete or fail.</p>
+
+      <div class="webhook-create">
+        <input v-model="webhookName" placeholder="Webhook name" class="form-input" />
+        <input v-model="webhookUrl" placeholder="https://example.com/webhook" class="form-input flex-1" />
+        <button class="btn btn-primary" @click="createWebhook" :disabled="!webhookName.trim() || !webhookUrl.trim() || creatingWebhook">
+          {{ creatingWebhook ? 'Creating...' : 'Add Webhook' }}
+        </button>
+      </div>
+
+      <div v-if="newWebhookSecret" class="new-key-alert">
+        <strong>Webhook secret (copy now):</strong>
+        <code>{{ newWebhookSecret }}</code>
+      </div>
+
+      <div v-if="webhooks.length > 0" class="key-list">
+        <div v-for="w in webhooks" :key="w.id" class="key-row">
+          <div>
+            <span class="key-name">{{ w.name }}</span>
+            <span class="key-prefix">{{ w.url }}</span>
+            <span class="key-used">Events: {{ w.events?.join(', ') }}</span>
+          </div>
+          <div class="key-actions">
+            <button class="btn-test-sm" @click="testWebhook(w)">Test</button>
+            <button class="btn-danger-sm" @click="deleteWebhook(w)">Delete</button>
+          </div>
+        </div>
+      </div>
+      <div v-else class="empty-hint">No webhooks configured.</div>
+      <span v-if="webhookMsg" class="msg" :class="webhookMsgType">{{ webhookMsg }}</span>
+    </section>
+
     <section class="card">
       <h3>Change Password</h3>
       <form @submit.prevent="savePassword">
@@ -71,6 +136,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import axios from 'axios'
 import { useAuthStore } from '../stores/auth'
 import { isSupported, requestPermission } from '../utils/notify'
 
@@ -86,6 +152,21 @@ const savingPw = ref(false)
 const pwMsg = ref('')
 const pwError = ref(false)
 const prefMsg = ref('')
+
+// API Keys
+const apiKeys = ref([])
+const apiKeyName = ref('')
+const creatingKey = ref(false)
+const newKeySecret = ref('')
+
+// Webhooks
+const webhooks = ref([])
+const webhookName = ref('')
+const webhookUrl = ref('')
+const creatingWebhook = ref(false)
+const newWebhookSecret = ref('')
+const webhookMsg = ref('')
+const webhookMsgType = ref('success')
 
 const notifStatus = computed(() => {
   if (!isSupported()) return 'Not supported'
@@ -119,7 +200,94 @@ function resetTour() {
 
 onMounted(() => {
   fullName.value = auth.user?.full_name || ''
+  fetchApiKeys()
+  fetchWebhooks()
 })
+
+// API Key functions
+async function fetchApiKeys() {
+  try {
+    const { data } = await axios.get('/api/auth/api-keys')
+    apiKeys.value = data
+  } catch { /* ignore */ }
+}
+
+async function createApiKey() {
+  if (!apiKeyName.value.trim()) return
+  creatingKey.value = true
+  newKeySecret.value = ''
+  try {
+    const { data } = await axios.post('/api/auth/api-keys', { name: apiKeyName.value.trim() })
+    newKeySecret.value = data.key
+    apiKeyName.value = ''
+    await fetchApiKeys()
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to create key')
+  } finally {
+    creatingKey.value = false
+  }
+}
+
+async function revokeApiKey(k) {
+  if (!confirm(`Revoke API key "${k.name}"? This cannot be undone.`)) return
+  try {
+    await axios.delete(`/api/auth/api-keys/${k.id}`)
+    apiKeys.value = apiKeys.value.filter(x => x.id !== k.id)
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to revoke key')
+  }
+}
+
+// Webhook functions
+async function fetchWebhooks() {
+  try {
+    const { data } = await axios.get('/api/webhooks/')
+    webhooks.value = data
+  } catch { /* ignore */ }
+}
+
+async function createWebhook() {
+  if (!webhookName.value.trim() || !webhookUrl.value.trim()) return
+  creatingWebhook.value = true
+  newWebhookSecret.value = ''
+  try {
+    const { data } = await axios.post('/api/webhooks/', {
+      name: webhookName.value.trim(),
+      url: webhookUrl.value.trim(),
+    })
+    newWebhookSecret.value = data.secret
+    webhookName.value = ''
+    webhookUrl.value = ''
+    await fetchWebhooks()
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to create webhook')
+  } finally {
+    creatingWebhook.value = false
+  }
+}
+
+async function testWebhook(w) {
+  webhookMsg.value = ''
+  try {
+    const { data } = await axios.post(`/api/webhooks/${w.id}/test`)
+    webhookMsg.value = `Test ${data.status}`
+    webhookMsgType.value = data.status === 'delivered' ? 'success' : 'error'
+  } catch (e) {
+    webhookMsg.value = e.response?.data?.detail || 'Test failed'
+    webhookMsgType.value = 'error'
+  }
+  setTimeout(() => { webhookMsg.value = '' }, 4000)
+}
+
+async function deleteWebhook(w) {
+  if (!confirm(`Delete webhook "${w.name}"?`)) return
+  try {
+    await axios.delete(`/api/webhooks/${w.id}`)
+    webhooks.value = webhooks.value.filter(x => x.id !== w.id)
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to delete webhook')
+  }
+}
 
 async function saveName() {
   savingName.value = true
@@ -254,4 +422,100 @@ async function savePassword() {
   white-space: nowrap;
 }
 .btn-small:hover { border-color: var(--accent); color: var(--accent); }
+
+/* API Keys & Webhooks */
+.card-desc {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+.api-key-create, .webhook-create {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+.form-input {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.85rem;
+  background: var(--bg-input);
+  color: var(--text-body);
+  min-width: 160px;
+}
+.flex-1 { flex: 1; }
+.new-key-alert {
+  padding: 0.6rem 0.75rem;
+  background: var(--warning-bg, #fff3e0);
+  border: 1px solid var(--warning, #ff9800);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  margin-bottom: 0.75rem;
+  word-break: break-all;
+}
+.new-key-alert code {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-primary);
+}
+.key-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.key-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg-badge);
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+.key-name {
+  font-weight: 600;
+  color: var(--text-body);
+  margin-right: 0.5rem;
+}
+.key-prefix {
+  color: var(--text-muted);
+  font-family: monospace;
+  font-size: 0.75rem;
+  margin-right: 0.5rem;
+}
+.key-used {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+}
+.key-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+.btn-danger-sm {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  background: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+.btn-danger-sm:hover { background: var(--danger-bg); }
+.btn-test-sm {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+.btn-test-sm:hover { background: var(--accent-faint, rgba(59,130,246,0.08)); }
+.empty-hint {
+  font-size: 0.82rem;
+  color: var(--text-faint);
+  padding: 0.5rem 0;
+}
 </style>
