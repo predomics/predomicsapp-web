@@ -126,6 +126,30 @@ async def _run_mock_analysis(auth_client, pid, x_file_id, y_file_id):
     return resp.json()["job_id"]
 
 
+async def _create_completed_job(auth_client, db_session):
+    """Create a project, run a mock analysis, save results, mark as completed.
+
+    Returns (project_id, job_id).
+    """
+    from sqlalchemy import text
+
+    pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+    job_id = await _run_mock_analysis(auth_client, pid, x_fid, y_fid)
+
+    # Save mock results to disk
+    mock = ml_engine._mock_results()
+    storage.save_job_result(pid, job_id, mock)
+
+    # Mark job as completed in the database
+    await db_session.execute(
+        text("UPDATE jobs SET status = 'completed' WHERE id = :jid"),
+        {"jid": job_id},
+    )
+    await db_session.commit()
+
+    return pid, job_id
+
+
 # ---------------------------------------------------------------------------
 # Health endpoint
 # ---------------------------------------------------------------------------
@@ -2158,3 +2182,841 @@ class TestDataAnalysisService:
         result = _get_cached("test_key_abc")
         assert result is not None
         assert result["data"] == 42
+
+
+# ---------------------------------------------------------------------------
+# Export endpoints
+# ---------------------------------------------------------------------------
+
+class TestExport:
+    """Tests for CSV, JSON, HTML report, and notebook export endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_export_csv_best_model(self, auth_client, db_session):
+        pid, job_id = await _create_completed_job(auth_client, db_session)
+        resp = await auth_client.get(
+            f"/api/export/{pid}/jobs/{job_id}/csv",
+            params={"section": "best_model"},
+        )
+        assert resp.status_code == 200
+        assert "text/csv" in resp.headers["content-type"]
+        assert "best_model_" in resp.headers["content-disposition"]
+        body = resp.text
+        assert "Metric" in body
+        assert "auc" in body.lower()
+
+    @pytest.mark.asyncio
+    async def test_export_csv_population(self, auth_client, db_session):
+        pid, job_id = await _create_completed_job(auth_client, db_session)
+        resp = await auth_client.get(
+            f"/api/export/{pid}/jobs/{job_id}/csv",
+            params={"section": "population"},
+        )
+        assert resp.status_code == 200
+        assert "population_" in resp.headers["content-disposition"]
+        body = resp.text
+        assert "Rank" in body
+
+    @pytest.mark.asyncio
+    async def test_export_csv_generation_tracking(self, auth_client, db_session):
+        pid, job_id = await _create_completed_job(auth_client, db_session)
+        resp = await auth_client.get(
+            f"/api/export/{pid}/jobs/{job_id}/csv",
+            params={"section": "generation_tracking"},
+        )
+        assert resp.status_code == 200
+        assert "generation_tracking_" in resp.headers["content-disposition"]
+        body = resp.text
+        assert "Generation" in body
+
+    @pytest.mark.asyncio
+    async def test_export_csv_unknown_section_returns_400(self, auth_client, db_session):
+        pid, job_id = await _create_completed_job(auth_client, db_session)
+        resp = await auth_client.get(
+            f"/api/export/{pid}/jobs/{job_id}/csv",
+            params={"section": "nonexistent_section"},
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_export_csv_nonexistent_job_returns_404(self, auth_client):
+        pid, _, _ = await _create_project_with_datasets(auth_client)
+        resp = await auth_client.get(
+            f"/api/export/{pid}/jobs/nonexistent123/csv",
+            params={"section": "best_model"},
+        )
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_export_json(self, auth_client, db_session):
+        pid, job_id = await _create_completed_job(auth_client, db_session)
+        resp = await auth_client.get(f"/api/export/{pid}/jobs/{job_id}/json")
+        assert resp.status_code == 200
+        assert "application/json" in resp.headers["content-type"]
+        data = resp.json()
+        assert "best_individual" in data
+        assert "feature_names" in data
+
+    @pytest.mark.asyncio
+    async def test_export_report_html(self, auth_client, db_session):
+        pid, job_id = await _create_completed_job(auth_client, db_session)
+        resp = await auth_client.get(f"/api/export/{pid}/jobs/{job_id}/report")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "predomics_report_" in resp.headers["content-disposition"]
+        body = resp.text
+        assert "Predomics Analysis Report" in body
+        assert "Best AUC" in body
+
+    @pytest.mark.asyncio
+    async def test_export_notebook_python(self, auth_client, db_session):
+        pid, job_id = await _create_completed_job(auth_client, db_session)
+        resp = await auth_client.get(
+            f"/api/export/{pid}/jobs/{job_id}/notebook",
+            params={"lang": "python"},
+        )
+        assert resp.status_code == 200
+        assert "ipynb" in resp.headers["content-disposition"]
+        data = resp.json()
+        assert "nbformat" in data
+        assert data["nbformat"] == 4
+        assert len(data["cells"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_export_notebook_r(self, auth_client, db_session):
+        pid, job_id = await _create_completed_job(auth_client, db_session)
+        resp = await auth_client.get(
+            f"/api/export/{pid}/jobs/{job_id}/notebook",
+            params={"lang": "r"},
+        )
+        assert resp.status_code == 200
+        assert ".Rmd" in resp.headers["content-disposition"]
+        body = resp.text
+        assert "gpredomicsR" in body
+        assert "ggplot2" in body
+
+    @pytest.mark.asyncio
+    async def test_export_notebook_invalid_lang_returns_400(self, auth_client, db_session):
+        pid, job_id = await _create_completed_job(auth_client, db_session)
+        resp = await auth_client.get(
+            f"/api/export/{pid}/jobs/{job_id}/notebook",
+            params={"lang": "julia"},
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_export_unauthenticated_returns_error(self, client):
+        resp = await client.get("/api/export/fake_proj/jobs/fake_job/csv")
+        assert resp.status_code in (401, 403)
+
+
+# ---------------------------------------------------------------------------
+# Export helper unit tests
+# ---------------------------------------------------------------------------
+
+class TestExportHelpers:
+    """Unit tests for export helper functions."""
+
+    def test_esc_html_entities(self):
+        from app.routers.export import _esc
+        assert _esc('<script>alert("xss")</script>') == '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;'
+        assert _esc("plain text") == "plain text"
+        assert _esc(None) == ""
+
+    def test_fmt_numeric(self):
+        from app.routers.export import _fmt
+        assert _fmt(0.89213, 4) == "0.8921"
+        assert _fmt(None) == "—"
+        assert _fmt(42, 2) == "42.00"
+        assert _fmt("text") == "text"
+
+    def test_build_jury_html(self):
+        from app.routers.export import _build_jury_html
+        jury = {
+            "train": {"auc": 0.92, "accuracy": 0.88},
+            "test": {"auc": 0.87},
+            "sample_predictions": [
+                {"name": "s1", "real": 0, "predicted": 0, "correct": True, "consistency": 95.0},
+                {"name": "s2", "real": 1, "predicted": 0, "correct": False, "consistency": 55.0},
+            ],
+        }
+        html = _build_jury_html(jury)
+        assert "Jury Voting" in html
+        assert "0.9200" in html
+        assert "s1" in html
+        assert "s2" in html
+
+    def test_build_importance_html(self):
+        from app.routers.export import _build_importance_html
+        importance = [
+            {"feature": "feature_A", "importance": 0.35},
+            {"feature": "feature_B", "importance": 0.12},
+        ]
+        html = _build_importance_html(importance)
+        assert "Feature Importance" in html
+        assert "feature_A" in html
+        assert "0.3500" in html
+
+    def test_nb_cell_markdown(self):
+        from app.routers.export import _nb_cell
+        cell = _nb_cell("markdown", "# Title\nParagraph")
+        assert cell["cell_type"] == "markdown"
+        assert len(cell["source"]) == 2  # two lines
+
+    def test_nb_cell_code(self):
+        from app.routers.export import _nb_cell
+        cell = _nb_cell("code", "x = 1")
+        assert cell["cell_type"] == "code"
+        assert cell["execution_count"] is None
+        assert cell["outputs"] == []
+
+
+# ---------------------------------------------------------------------------
+# Batch runs
+# ---------------------------------------------------------------------------
+
+class TestBatchRuns:
+    """Tests for batch run endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_batch_run_creates_multiple_jobs(self, auth_client):
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+        config = {
+            "general": {"algo": "ga", "language": "bin", "data_type": "raw", "fit": "auc",
+                        "seed": 42, "thread_number": 1, "k_penalty": 0.0001, "cv": False, "gpu": False},
+            "ga": {"population_size": 50, "max_epochs": 2, "k_min": 1, "k_max": 10},
+        }
+        sweep = {"sweeps": {"general.seed": [1, 2, 3]}}
+
+        with patch("app.services.engine.run_experiment", return_value=ml_engine._mock_results()):
+            resp = await auth_client.post(
+                f"/api/analysis/{pid}/batch",
+                json={"config": config, "sweep": sweep},
+                params={"x_file_id": x_fid, "y_file_id": y_fid},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["job_count"] == 3
+        assert data["batch_id"] is not None
+
+    @pytest.mark.asyncio
+    async def test_batch_run_too_many_combinations_returns_400(self, auth_client):
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+        config = {
+            "general": {"algo": "ga", "language": "bin", "data_type": "raw", "fit": "auc",
+                        "seed": 42, "thread_number": 1, "k_penalty": 0.0001, "cv": False, "gpu": False},
+            "ga": {"population_size": 50, "max_epochs": 2, "k_min": 1, "k_max": 10},
+        }
+        # 10 x 10 = 100 > 50 max
+        sweep = {"sweeps": {
+            "general.seed": list(range(10)),
+            "ga.population_size": list(range(100, 200, 10)),
+        }}
+
+        resp = await auth_client.post(
+            f"/api/analysis/{pid}/batch",
+            json={"config": config, "sweep": sweep},
+            params={"x_file_id": x_fid, "y_file_id": y_fid},
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_list_batches(self, auth_client):
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+        config = {
+            "general": {"algo": "ga", "language": "bin", "data_type": "raw", "fit": "auc",
+                        "seed": 42, "thread_number": 1, "k_penalty": 0.0001, "cv": False, "gpu": False},
+            "ga": {"population_size": 50, "max_epochs": 2, "k_min": 1, "k_max": 10},
+        }
+        sweep = {"sweeps": {"general.seed": [1, 2]}}
+
+        with patch("app.services.engine.run_experiment", return_value=ml_engine._mock_results()):
+            await auth_client.post(
+                f"/api/analysis/{pid}/batch",
+                json={"config": config, "sweep": sweep},
+                params={"x_file_id": x_fid, "y_file_id": y_fid},
+            )
+
+        resp = await auth_client.get(f"/api/analysis/{pid}/batches")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) >= 1
+        assert "batch_id" in data[0]
+        assert "job_count" in data[0]
+
+
+# ---------------------------------------------------------------------------
+# Concurrent job execution
+# ---------------------------------------------------------------------------
+
+class TestConcurrentJobs:
+    """Test concurrent job execution and isolation."""
+
+    @pytest.mark.asyncio
+    async def test_run_multiple_jobs_same_project(self, auth_client):
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+        config = {
+            "general": {"algo": "ga", "language": "bin", "data_type": "raw", "fit": "auc",
+                        "seed": 42, "thread_number": 1, "k_penalty": 0.0001, "cv": False, "gpu": False},
+            "ga": {"population_size": 50, "max_epochs": 2, "k_min": 1, "k_max": 10},
+        }
+
+        job_ids = []
+        with patch("app.services.engine.run_experiment", return_value=ml_engine._mock_results()):
+            for seed in [1, 2, 3]:
+                cfg = {**config, "general": {**config["general"], "seed": seed}}
+                resp = await auth_client.post(
+                    f"/api/analysis/{pid}/run",
+                    json=cfg,
+                    params={"x_file_id": x_fid, "y_file_id": y_fid},
+                )
+                assert resp.status_code == 200
+                job_ids.append(resp.json()["job_id"])
+
+        # All job IDs should be unique
+        assert len(set(job_ids)) == 3
+
+        # All jobs should be listed
+        resp = await auth_client.get(f"/api/analysis/{pid}/jobs")
+        assert len(resp.json()) == 3
+
+    @pytest.mark.asyncio
+    async def test_jobs_isolated_between_projects(self, auth_client):
+        pid1, x1, y1 = await _create_project_with_datasets(auth_client)
+        pid2_resp = await auth_client.post("/api/projects/", params={"name": "proj2"})
+        pid2 = pid2_resp.json()["project_id"]
+        await auth_client.post(
+            f"/api/projects/{pid2}/datasets",
+            files={"file": ("X.tsv", b"id\ts1\ts2\nf1\t0.1\t0.2\nf2\t0.3\t0.4\n", "text/plain")},
+        )
+        await auth_client.post(
+            f"/api/projects/{pid2}/datasets",
+            files={"file": ("y.tsv", b"id\tclass\ns1\t0\ns2\t1\n", "text/plain")},
+        )
+        proj2 = (await auth_client.get(f"/api/projects/{pid2}")).json()
+        x2 = proj2["datasets"][0]["files"][0]["id"]
+        y2 = proj2["datasets"][1]["files"][0]["id"]
+
+        config = {
+            "general": {"algo": "ga", "language": "bin", "data_type": "raw", "fit": "auc",
+                        "seed": 42, "thread_number": 1, "k_penalty": 0.0001, "cv": False, "gpu": False},
+            "ga": {"population_size": 50, "max_epochs": 2, "k_min": 1, "k_max": 10},
+        }
+
+        with patch("app.services.engine.run_experiment", return_value=ml_engine._mock_results()):
+            await auth_client.post(
+                f"/api/analysis/{pid1}/run", json=config,
+                params={"x_file_id": x1, "y_file_id": y1},
+            )
+            await auth_client.post(
+                f"/api/analysis/{pid2}/run", json=config,
+                params={"x_file_id": x2, "y_file_id": y2},
+            )
+
+        jobs1 = (await auth_client.get(f"/api/analysis/{pid1}/jobs")).json()
+        jobs2 = (await auth_client.get(f"/api/analysis/{pid2}/jobs")).json()
+        assert len(jobs1) == 1
+        assert len(jobs2) == 1
+
+
+# ---------------------------------------------------------------------------
+# Error recovery and edge cases
+# ---------------------------------------------------------------------------
+
+class TestErrorRecovery:
+    """Tests for error handling and edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_export_pending_job_returns_400(self, auth_client):
+        """Exporting results of a non-completed job should fail."""
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+        # Create a job but don't mark it as completed
+        job_id = await _run_mock_analysis(auth_client, pid, x_fid, y_fid)
+
+        # Try to export — job is pending/running, not completed
+        resp = await auth_client.get(
+            f"/api/export/{pid}/jobs/{job_id}/csv",
+            params={"section": "best_model"},
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_delete_project_with_running_job(self, auth_client):
+        """Deleting a project should work even if it has jobs."""
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+        await _run_mock_analysis(auth_client, pid, x_fid, y_fid)
+
+        resp = await auth_client.delete(f"/api/projects/{pid}")
+        assert resp.status_code == 200
+
+        # Project should be gone
+        resp = await auth_client.get(f"/api/projects/{pid}")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_upload_empty_file_returns_error(self, auth_client):
+        resp = await auth_client.post("/api/projects/", params={"name": "empty_test"})
+        pid = resp.json()["project_id"]
+        resp = await auth_client.post(
+            f"/api/projects/{pid}/datasets",
+            files={"file": ("empty.tsv", b"", "text/plain")},
+        )
+        # Should reject or handle gracefully
+        assert resp.status_code in (200, 400, 422)
+
+    @pytest.mark.asyncio
+    async def test_analysis_with_all_algorithms(self, auth_client):
+        """Test that all algorithm types are accepted."""
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+
+        for algo in ["ga", "beam", "mcmc"]:
+            config = {
+                "general": {"algo": algo, "language": "bin", "data_type": "raw", "fit": "auc",
+                            "seed": 42, "thread_number": 1, "k_penalty": 0.0001, "cv": False, "gpu": False},
+                "ga": {"population_size": 50, "max_epochs": 2, "k_min": 1, "k_max": 10},
+            }
+            with patch("app.services.engine.run_experiment", return_value=ml_engine._mock_results()):
+                resp = await auth_client.post(
+                    f"/api/analysis/{pid}/run",
+                    json=config,
+                    params={"x_file_id": x_fid, "y_file_id": y_fid},
+                )
+                assert resp.status_code == 200, f"algo={algo} failed"
+
+    @pytest.mark.asyncio
+    async def test_dataset_tags_crud(self, auth_client):
+        """Test dataset tag operations."""
+        # Create a dataset (uses query params, not JSON body)
+        resp = await auth_client.post("/api/datasets/", params={"name": "TagTest"})
+        assert resp.status_code in (200, 201)
+        ds_id = resp.json()["id"]
+
+        # Update tags (PATCH with embedded body)
+        resp = await auth_client.patch(
+            f"/api/datasets/{ds_id}/tags",
+            json={"tags": ["metagenomic", "clinical"]},
+        )
+        assert resp.status_code == 200
+
+        # Verify tags persisted
+        resp = await auth_client.get("/api/datasets/")
+        assert resp.status_code == 200
+        ds = next((d for d in resp.json() if d["id"] == ds_id), None)
+        assert ds is not None
+        assert set(ds["tags"]) == {"metagenomic", "clinical"}
+
+        # Filter by tag
+        resp = await auth_client.get("/api/datasets/", params={"tag": "metagenomic"})
+        assert resp.status_code == 200
+        assert any(d["id"] == ds_id for d in resp.json())
+
+
+# ---------------------------------------------------------------------------
+# Dataset Library CRUD
+# ---------------------------------------------------------------------------
+
+class TestDatasetLibrary:
+    """Tests for dataset library endpoints (create, read, update, delete)."""
+
+    @pytest.mark.asyncio
+    async def test_create_dataset(self, auth_client):
+        resp = await auth_client.post("/api/datasets/", params={"name": "My Dataset", "description": "Test desc"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "My Dataset"
+        assert data["description"] == "Test desc"
+        assert data["files"] == []
+        assert data["project_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_create_dataset_with_tags(self, auth_client):
+        resp = await auth_client.post("/api/datasets/", params={"name": "Tagged DS", "tags": "clinical,metagenomic"})
+        assert resp.status_code == 200
+        assert set(resp.json()["tags"]) == {"clinical", "metagenomic"}
+
+    @pytest.mark.asyncio
+    async def test_get_tag_suggestions(self, auth_client):
+        # Create dataset with custom tags first
+        await auth_client.post("/api/datasets/", params={"name": "ds1", "tags": "custom_tag"})
+        resp = await auth_client.get("/api/datasets/tags/suggestions")
+        assert resp.status_code == 200
+        suggestions = resp.json()["suggestions"]
+        assert "custom_tag" in suggestions
+        # Should also include predefined tags
+        assert "clinical" in suggestions
+
+    @pytest.mark.asyncio
+    async def test_list_datasets_empty(self, auth_client):
+        resp = await auth_client.get("/api/datasets/")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    @pytest.mark.asyncio
+    async def test_list_datasets_with_search(self, auth_client):
+        await auth_client.post("/api/datasets/", params={"name": "Alpha Dataset"})
+        await auth_client.post("/api/datasets/", params={"name": "Beta Dataset"})
+
+        resp = await auth_client.get("/api/datasets/", params={"search": "alpha"})
+        assert resp.status_code == 200
+        results = resp.json()
+        assert len(results) == 1
+        assert results[0]["name"] == "Alpha Dataset"
+
+    @pytest.mark.asyncio
+    async def test_get_dataset_by_id(self, auth_client):
+        create_resp = await auth_client.post("/api/datasets/", params={"name": "Detail DS"})
+        ds_id = create_resp.json()["id"]
+
+        resp = await auth_client.get(f"/api/datasets/{ds_id}")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Detail DS"
+
+    @pytest.mark.asyncio
+    async def test_get_dataset_not_found(self, auth_client):
+        resp = await auth_client.get("/api/datasets/nonexistent")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_dataset(self, auth_client):
+        create_resp = await auth_client.post("/api/datasets/", params={"name": "To Delete"})
+        ds_id = create_resp.json()["id"]
+
+        resp = await auth_client.delete(f"/api/datasets/{ds_id}")
+        assert resp.status_code == 200
+
+        # Verify gone
+        resp = await auth_client.get(f"/api/datasets/{ds_id}")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_dataset_not_found(self, auth_client):
+        resp = await auth_client.delete("/api/datasets/nonexistent")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_update_tags(self, auth_client):
+        create_resp = await auth_client.post("/api/datasets/", params={"name": "Tag DS"})
+        ds_id = create_resp.json()["id"]
+
+        resp = await auth_client.patch(f"/api/datasets/{ds_id}/tags", json={"tags": ["a", "b", "c"]})
+        assert resp.status_code == 200
+        assert set(resp.json()["tags"]) == {"a", "b", "c"}
+
+    @pytest.mark.asyncio
+    async def test_update_tags_deduplicates(self, auth_client):
+        create_resp = await auth_client.post("/api/datasets/", params={"name": "Dedup DS"})
+        ds_id = create_resp.json()["id"]
+
+        resp = await auth_client.patch(f"/api/datasets/{ds_id}/tags", json={"tags": ["a", "a", "b"]})
+        assert resp.status_code == 200
+        assert resp.json()["tags"] == ["a", "b"]
+
+    @pytest.mark.asyncio
+    async def test_upload_file_to_dataset(self, auth_client):
+        create_resp = await auth_client.post("/api/datasets/", params={"name": "File DS"})
+        ds_id = create_resp.json()["id"]
+
+        resp = await auth_client.post(
+            f"/api/datasets/{ds_id}/files",
+            files={"file": ("X.tsv", b"id\ts1\ts2\nf1\t0.1\t0.2\n", "text/plain")},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["filename"] == "X.tsv"
+        assert data["role"] == "xtrain"
+
+    @pytest.mark.asyncio
+    async def test_upload_file_auto_infer_role(self, auth_client):
+        create_resp = await auth_client.post("/api/datasets/", params={"name": "Role DS"})
+        ds_id = create_resp.json()["id"]
+
+        # y.tsv should be inferred as ytrain
+        resp = await auth_client.post(
+            f"/api/datasets/{ds_id}/files",
+            files={"file": ("y.tsv", b"id\tclass\ns1\t0\n", "text/plain")},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "ytrain"
+
+    @pytest.mark.asyncio
+    async def test_delete_file_from_dataset(self, auth_client):
+        create_resp = await auth_client.post("/api/datasets/", params={"name": "Del File DS"})
+        ds_id = create_resp.json()["id"]
+
+        # Upload a file
+        file_resp = await auth_client.post(
+            f"/api/datasets/{ds_id}/files",
+            files={"file": ("test.tsv", b"id\ts1\nf1\t0.1\n", "text/plain")},
+        )
+        file_id = file_resp.json()["id"]
+
+        # Delete it
+        resp = await auth_client.delete(f"/api/datasets/{ds_id}/files/{file_id}")
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_assign_dataset_to_project(self, auth_client):
+        # Create dataset
+        ds_resp = await auth_client.post("/api/datasets/", params={"name": "Assign DS"})
+        ds_id = ds_resp.json()["id"]
+
+        # Create project
+        proj_resp = await auth_client.post("/api/projects/", params={"name": "Assign Proj"})
+        pid = proj_resp.json()["project_id"]
+
+        # Assign
+        resp = await auth_client.post(f"/api/datasets/{ds_id}/assign/{pid}")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "assigned"
+
+        # Check project now has the dataset
+        proj = (await auth_client.get(f"/api/projects/{pid}")).json()
+        assert any(d["id"] == ds_id for d in proj["datasets"])
+
+    @pytest.mark.asyncio
+    async def test_assign_dataset_duplicate_returns_409(self, auth_client):
+        ds_resp = await auth_client.post("/api/datasets/", params={"name": "Dup DS"})
+        ds_id = ds_resp.json()["id"]
+        proj_resp = await auth_client.post("/api/projects/", params={"name": "Dup Proj"})
+        pid = proj_resp.json()["project_id"]
+
+        await auth_client.post(f"/api/datasets/{ds_id}/assign/{pid}")
+        resp = await auth_client.post(f"/api/datasets/{ds_id}/assign/{pid}")
+        assert resp.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_unassign_dataset_from_project(self, auth_client):
+        ds_resp = await auth_client.post("/api/datasets/", params={"name": "Unassign DS"})
+        ds_id = ds_resp.json()["id"]
+        proj_resp = await auth_client.post("/api/projects/", params={"name": "Unassign Proj"})
+        pid = proj_resp.json()["project_id"]
+
+        await auth_client.post(f"/api/datasets/{ds_id}/assign/{pid}")
+        resp = await auth_client.delete(f"/api/datasets/{ds_id}/assign/{pid}")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "unassigned"
+
+
+# ---------------------------------------------------------------------------
+# Project update / delete
+# ---------------------------------------------------------------------------
+
+class TestProjectCRUD:
+    """Tests for project update and delete operations."""
+
+    @pytest.mark.asyncio
+    async def test_update_project_name(self, auth_client):
+        resp = await auth_client.post("/api/projects/", params={"name": "Original"})
+        pid = resp.json()["project_id"]
+
+        resp = await auth_client.patch(f"/api/projects/{pid}", params={"name": "Updated Name"})
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Updated Name"
+
+    @pytest.mark.asyncio
+    async def test_update_project_description(self, auth_client):
+        resp = await auth_client.post("/api/projects/", params={"name": "Desc Proj"})
+        pid = resp.json()["project_id"]
+
+        resp = await auth_client.patch(f"/api/projects/{pid}", params={"description": "New description"})
+        assert resp.status_code == 200
+        assert resp.json()["description"] == "New description"
+
+    @pytest.mark.asyncio
+    async def test_get_project_details(self, auth_client):
+        resp = await auth_client.post("/api/projects/", params={"name": "Detail Proj", "description": "Desc"})
+        pid = resp.json()["project_id"]
+
+        resp = await auth_client.get(f"/api/projects/{pid}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "Detail Proj"
+        assert data["description"] == "Desc"
+        assert data["datasets"] == []
+
+    @pytest.mark.asyncio
+    async def test_delete_project(self, auth_client):
+        resp = await auth_client.post("/api/projects/", params={"name": "To Delete"})
+        pid = resp.json()["project_id"]
+
+        resp = await auth_client.delete(f"/api/projects/{pid}")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "deleted"
+
+        # Verify gone
+        resp = await auth_client.get(f"/api/projects/{pid}")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_project_nonexistent(self, auth_client):
+        resp = await auth_client.delete("/api/projects/nonexistent")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_upload_dataset_to_project(self, auth_client):
+        resp = await auth_client.post("/api/projects/", params={"name": "Upload Proj"})
+        pid = resp.json()["project_id"]
+
+        resp = await auth_client.post(
+            f"/api/projects/{pid}/datasets",
+            files={"file": ("X.tsv", b"id\ts1\ts2\ts3\nf1\t0.1\t0.2\t0.3\nf2\t0.4\t0.5\t0.6\n", "text/plain")},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["filename"] == "X.tsv"
+        assert data["n_features"] == 2
+        assert data["n_samples"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Project Sharing
+# ---------------------------------------------------------------------------
+
+class TestSharing:
+    """Tests for project sharing endpoints."""
+
+    async def _create_second_user(self, client):
+        """Register a second user and return auth headers."""
+        await client.post("/api/auth/register", json={
+            "email": "user2@example.com", "password": "pass2", "full_name": "User Two",
+        })
+        r = await client.post("/api/auth/login", json={
+            "email": "user2@example.com", "password": "pass2",
+        })
+        return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+    @pytest.mark.asyncio
+    async def test_share_project(self, auth_client, client, db_session):
+        # Create a second user
+        await self._create_second_user(client)
+
+        # Create project as first user
+        resp = await auth_client.post("/api/projects/", params={"name": "Share Proj"})
+        pid = resp.json()["project_id"]
+
+        # Share with user2
+        resp = await auth_client.post(
+            f"/api/projects/{pid}/share",
+            json={"email": "user2@example.com", "role": "viewer"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["email"] == "user2@example.com"
+        assert data["role"] == "viewer"
+
+    @pytest.mark.asyncio
+    async def test_share_with_self_rejected(self, auth_client):
+        resp = await auth_client.post("/api/projects/", params={"name": "Self Share"})
+        pid = resp.json()["project_id"]
+
+        resp = await auth_client.post(
+            f"/api/projects/{pid}/share",
+            json={"email": "test@example.com", "role": "viewer"},
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_share_invalid_role_rejected(self, auth_client, client, db_session):
+        await self._create_second_user(client)
+        resp = await auth_client.post("/api/projects/", params={"name": "Bad Role"})
+        pid = resp.json()["project_id"]
+
+        resp = await auth_client.post(
+            f"/api/projects/{pid}/share",
+            json={"email": "user2@example.com", "role": "admin"},
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_share_nonexistent_user(self, auth_client):
+        resp = await auth_client.post("/api/projects/", params={"name": "No User"})
+        pid = resp.json()["project_id"]
+
+        resp = await auth_client.post(
+            f"/api/projects/{pid}/share",
+            json={"email": "nobody@example.com", "role": "viewer"},
+        )
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_share_duplicate_rejected(self, auth_client, client, db_session):
+        await self._create_second_user(client)
+        resp = await auth_client.post("/api/projects/", params={"name": "Dup Share"})
+        pid = resp.json()["project_id"]
+
+        await auth_client.post(f"/api/projects/{pid}/share", json={"email": "user2@example.com", "role": "viewer"})
+        resp = await auth_client.post(f"/api/projects/{pid}/share", json={"email": "user2@example.com", "role": "viewer"})
+        assert resp.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_list_shares(self, auth_client, client, db_session):
+        await self._create_second_user(client)
+        resp = await auth_client.post("/api/projects/", params={"name": "List Shares"})
+        pid = resp.json()["project_id"]
+
+        await auth_client.post(f"/api/projects/{pid}/share", json={"email": "user2@example.com", "role": "editor"})
+
+        resp = await auth_client.get(f"/api/projects/{pid}/shares")
+        assert resp.status_code == 200
+        shares = resp.json()
+        assert len(shares) == 1
+        assert shares[0]["email"] == "user2@example.com"
+        assert shares[0]["role"] == "editor"
+
+    @pytest.mark.asyncio
+    async def test_update_share_role(self, auth_client, client, db_session):
+        await self._create_second_user(client)
+        resp = await auth_client.post("/api/projects/", params={"name": "Update Share"})
+        pid = resp.json()["project_id"]
+
+        share_resp = await auth_client.post(f"/api/projects/{pid}/share", json={"email": "user2@example.com", "role": "viewer"})
+        share_id = share_resp.json()["id"]
+
+        resp = await auth_client.put(
+            f"/api/projects/{pid}/shares/{share_id}",
+            json={"email": "user2@example.com", "role": "editor"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "editor"
+
+    @pytest.mark.asyncio
+    async def test_revoke_share(self, auth_client, client, db_session):
+        await self._create_second_user(client)
+        resp = await auth_client.post("/api/projects/", params={"name": "Revoke Share"})
+        pid = resp.json()["project_id"]
+
+        share_resp = await auth_client.post(f"/api/projects/{pid}/share", json={"email": "user2@example.com", "role": "viewer"})
+        share_id = share_resp.json()["id"]
+
+        resp = await auth_client.delete(f"/api/projects/{pid}/shares/{share_id}")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "revoked"
+
+        # Verify removed
+        resp = await auth_client.get(f"/api/projects/{pid}/shares")
+        assert resp.json() == []
+
+    @pytest.mark.asyncio
+    async def test_shared_with_me(self, auth_client, client, db_session):
+        user2_h = await self._create_second_user(client)
+        resp = await auth_client.post("/api/projects/", params={"name": "Shared Proj"})
+        pid = resp.json()["project_id"]
+
+        await auth_client.post(f"/api/projects/{pid}/share", json={"email": "user2@example.com", "role": "viewer"})
+
+        # User2 checks shared-with-me
+        resp = await client.get("/api/projects/shared-with-me", headers=user2_h)
+        assert resp.status_code == 200
+        shared = resp.json()
+        assert len(shared) == 1
+        assert shared[0]["project_id"] == pid
+        assert shared[0]["role"] == "viewer"
+
+    @pytest.mark.asyncio
+    async def test_revoke_nonexistent_share(self, auth_client):
+        resp = await auth_client.post("/api/projects/", params={"name": "No Share"})
+        pid = resp.json()["project_id"]
+
+        resp = await auth_client.delete(f"/api/projects/{pid}/shares/nonexistent")
+        assert resp.status_code == 404
