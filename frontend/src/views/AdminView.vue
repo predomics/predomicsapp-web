@@ -98,6 +98,62 @@
       <button class="btn-reset" @click="resetDefaults">Reset All</button>
       <span v-if="defaultsSaved" class="save-ok">Saved!</span>
     </div>
+
+    <!-- System Backup & Restore Section -->
+    <h2 class="section-title">System Backup &amp; Restore</h2>
+    <p class="section-desc">Create full system backups (database + files) or restore from a previous backup.</p>
+
+    <div class="backup-actions">
+      <div class="backup-create">
+        <input v-model="backupDescription" placeholder="Backup description (optional)" class="backup-desc-input" />
+        <button class="btn-save" @click="createBackup" :disabled="backupCreating">
+          {{ backupCreating ? 'Creating...' : 'Create Backup' }}
+        </button>
+      </div>
+      <div class="backup-restore">
+        <label class="btn-restore">
+          Restore from file...
+          <input type="file" accept=".tar.gz,.tgz" @change="handleRestoreFile" style="display:none" />
+        </label>
+        <select v-model="restoreMode" class="restore-mode-select">
+          <option value="replace">Replace (wipe existing)</option>
+          <option value="merge">Merge (skip conflicts)</option>
+        </select>
+      </div>
+    </div>
+
+    <div v-if="backupMessage" :class="['backup-msg', backupMsgType]">{{ backupMessage }}</div>
+
+    <div v-if="backupLoading" class="loading">Loading backups...</div>
+    <table v-else-if="backups.length > 0" class="user-table backup-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Description</th>
+          <th>Size</th>
+          <th>Records</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="b in backups" :key="b.backup_id || b.filename">
+          <td class="date">{{ formatBackupDate(b.created_at) }}</td>
+          <td>{{ b.description || '—' }}</td>
+          <td>{{ formatSize(b.size_bytes) }}</td>
+          <td class="count">
+            <span v-if="b.table_counts">
+              {{ Object.values(b.table_counts).reduce((a, c) => a + c, 0) }}
+            </span>
+            <span v-else>—</span>
+          </td>
+          <td>
+            <button class="btn-download" @click="downloadBackup(b)">Download</button>
+            <button class="btn-delete" @click="deleteBackupConfirm(b)">Delete</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <div v-else-if="!backupLoading" class="empty-state">No backups yet. Create one to get started.</div>
   </div>
 </template>
 
@@ -218,9 +274,128 @@ async function deleteUser(u) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Backup & Restore
+// ---------------------------------------------------------------------------
+
+const backups = ref([])
+const backupLoading = ref(false)
+const backupCreating = ref(false)
+const backupDescription = ref('')
+const backupMessage = ref('')
+const backupMsgType = ref('success')
+const restoreMode = ref('replace')
+
+async function fetchBackups() {
+  backupLoading.value = true
+  try {
+    const { data } = await axios.get('/api/admin/backup/list')
+    backups.value = data
+  } catch { /* ignore */ }
+  finally { backupLoading.value = false }
+}
+
+async function createBackup() {
+  backupCreating.value = true
+  backupMessage.value = ''
+  try {
+    const { data } = await axios.post('/api/admin/backup', null, {
+      params: { description: backupDescription.value },
+    })
+    backupMessage.value = `Backup created: ${data.filename} (${formatSize(data.size_bytes)})`
+    backupMsgType.value = 'success'
+    backupDescription.value = ''
+    await fetchBackups()
+  } catch (e) {
+    backupMessage.value = e.response?.data?.detail || 'Backup failed'
+    backupMsgType.value = 'error'
+  } finally {
+    backupCreating.value = false
+  }
+}
+
+async function downloadBackup(b) {
+  try {
+    const resp = await axios.get(`/api/admin/backup/download/${b.backup_id}`, {
+      responseType: 'blob',
+    })
+    const url = URL.createObjectURL(resp.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = b.filename
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    backupMessage.value = 'Download failed'
+    backupMsgType.value = 'error'
+  }
+}
+
+async function deleteBackupConfirm(b) {
+  if (!confirm(`Delete backup "${b.filename}"? This cannot be undone.`)) return
+  try {
+    await axios.delete(`/api/admin/backup/${b.backup_id}`)
+    backupMessage.value = 'Backup deleted'
+    backupMsgType.value = 'success'
+    await fetchBackups()
+  } catch (e) {
+    backupMessage.value = e.response?.data?.detail || 'Delete failed'
+    backupMsgType.value = 'error'
+  }
+}
+
+async function handleRestoreFile(event) {
+  const file = event.target.files[0]
+  if (!file) return
+
+  const modeText = restoreMode.value === 'replace'
+    ? 'REPLACE all existing data'
+    : 'MERGE with existing data (skip conflicts)'
+
+  if (!confirm(`Restore from "${file.name}"?\n\nThis will ${modeText}.\nAre you sure?`)) {
+    event.target.value = ''
+    return
+  }
+
+  const form = new FormData()
+  form.append('file', file)
+
+  backupMessage.value = 'Restoring... This may take a while.'
+  backupMsgType.value = 'success'
+
+  try {
+    const { data } = await axios.post(`/api/admin/restore?mode=${restoreMode.value}`, form)
+    const counts = Object.entries(data.restored_counts || {})
+      .filter(([, c]) => c > 0)
+      .map(([t, c]) => `${t}: ${c}`)
+      .join(', ')
+    backupMessage.value = `Restored successfully (${data.mode} mode). ${counts}`
+    backupMsgType.value = 'success'
+    await fetchBackups()
+    await fetchUsers()
+  } catch (e) {
+    backupMessage.value = e.response?.data?.detail || 'Restore failed'
+    backupMsgType.value = 'error'
+  }
+  event.target.value = ''
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '—'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+function formatBackupDate(iso) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString()
+}
+
 onMounted(() => {
   fetchUsers()
   fetchDefaults()
+  fetchBackups()
 })
 </script>
 
@@ -388,5 +563,85 @@ onMounted(() => {
   font-size: 0.85rem;
   color: var(--success-dark, #2e7d32);
   font-weight: 500;
+}
+
+/* Backup & Restore */
+.backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  align-items: center;
+}
+.backup-create {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.backup-desc-input {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: var(--bg-input);
+  color: var(--text-body);
+  width: 220px;
+}
+.backup-restore {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-left: auto;
+}
+.btn-restore {
+  padding: 0.4rem 1rem;
+  background: var(--warning-bg, #fff3e0);
+  color: var(--warning-dark, #e65100);
+  border: 1px solid var(--warning, #ff9800);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.btn-restore:hover { opacity: 0.85; }
+.restore-mode-select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: var(--bg-input);
+  color: var(--text-body);
+}
+.backup-msg {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+.backup-msg.success {
+  background: var(--success-bg, #e8f5e9);
+  color: var(--success-dark, #2e7d32);
+}
+.backup-msg.error {
+  background: var(--danger-bg, #ffebee);
+  color: var(--danger, #c62828);
+}
+.backup-table { margin-bottom: 2rem; }
+.btn-download {
+  padding: 0.2rem 0.5rem;
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  margin-right: 0.3rem;
+}
+.btn-download:hover { background: var(--accent-faint, rgba(59, 130, 246, 0.08)); }
+.empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
 }
 </style>

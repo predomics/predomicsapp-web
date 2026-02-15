@@ -157,3 +157,59 @@ Comprehensive DEPLOYMENT.md covering all deployment scenarios.
 - Kubernetes deployment manifests with Ingress and cert-manager
 - Health check and monitoring guidance
 - Troubleshooting section
+
+---
+
+## Enhancements (Phase 2)
+
+### 14. Database Backup & Import ✅
+**Priority:** HIGH | **Effort:** Medium | **Status:** Done
+
+Full system backup and restore via portable tar.gz archives.
+
+- Backend service: JSON export of all DB tables in FK dependency order
+- Archive includes: database JSON, dataset files, job results, admin defaults, manifest
+- Restore modes: **replace** (wipe + restore) or **merge** (skip existing records)
+- Admin UI: create backup, list/download/delete backups, upload & restore
+- 5 new admin API endpoints
+
+### 15. WebSocket Live Job Logs ✅
+**Priority:** HIGH | **Effort:** Medium | **Status:** Done
+
+Real-time log streaming via WebSocket with HTTP polling fallback.
+
+- WebSocket endpoint: `/ws/jobs/{project_id}/{job_id}?token=JWT`
+- Tail-f style log streaming with 0.5s refresh
+- JWT authentication via query parameter
+- Automatic fallback to HTTP polling if WebSocket fails
+- Status change broadcasts (running → completed/failed)
+
+### 16. Dataset File Preview ✅
+**Priority:** MEDIUM | **Effort:** Low | **Status:** Done
+
+Preview dataset file contents without downloading.
+
+- Backend: CSV/TSV parsing with first N rows, column types, basic stats (min/max/mean/std)
+- Frontend modal with scrollable table, sticky headers, row numbers
+- Stats footer row, file metadata badges
+- Preview buttons in Dataset Library file rows
+
+### 17. Performance Optimizations ✅
+**Priority:** MEDIUM | **Effort:** Low | **Status:** Done
+
+Improve response times and initial load performance.
+
+- In-memory TTL cache decorator for expensive backend endpoints
+- GZip response compression middleware (min 1KB)
+- Dynamic import for Plotly.js (~3MB) — loaded on demand in Results tab
+
+### 18. Error Handling & UX Polish ✅
+**Priority:** MEDIUM | **Effort:** Low | **Status:** Done
+
+Structured error responses and user-facing notifications.
+
+- Backend: structured `{error: {code, message}}` JSON responses for all HTTP errors
+- Generic catch-all 500 handler with server-side logging
+- Toast notification system: composable + ToastContainer component
+- Axios response interceptor for global error display
+- Exponential backoff retry utility for transient failures

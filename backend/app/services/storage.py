@@ -12,6 +12,7 @@ def ensure_dirs() -> None:
     """Create storage directories if they don't exist."""
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     settings.project_dir.mkdir(parents=True, exist_ok=True)
+    (settings.data_dir / "backups").mkdir(parents=True, exist_ok=True)
 
 
 def ensure_project_dirs(project_id: str) -> None:

@@ -75,6 +75,7 @@
           <div v-for="f in d.files" :key="f.id" class="file-row">
             <span class="file-name">{{ f.filename }}</span>
             <span v-if="f.role" class="file-role">{{ f.role }}</span>
+            <button class="file-preview" @click="openPreview(d.id, f.id, f.filename)" title="Preview file">Preview</button>
             <button class="file-del" @click="deleteFile(d, f)" title="Remove file">&times;</button>
           </div>
         </div>
@@ -93,14 +94,29 @@
     </datalist>
 
     <div v-if="message" :class="['msg', msgType]">{{ message }}</div>
+
+    <!-- File Preview Modal -->
+    <DatasetPreviewModal
+      v-if="previewFile"
+      :dataset-id="previewFile.datasetId"
+      :file-id="previewFile.fileId"
+      :filename="previewFile.filename"
+      @close="previewFile = null"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
 import { useDatasetStore } from '../stores/dataset'
+import DatasetPreviewModal from '../components/DatasetPreviewModal.vue'
 
 const store = useDatasetStore()
+const previewFile = ref(null)
+
+function openPreview(datasetId, fileId, filename) {
+  previewFile.value = { datasetId, fileId, filename }
+}
 const groupName = ref('')
 const groupDesc = ref('')
 const groupTags = ref('')
@@ -471,6 +487,18 @@ onMounted(() => {
   font-weight: 600;
   text-transform: uppercase;
 }
+
+.file-preview {
+  background: none;
+  border: 1px solid var(--border-lighter);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.68rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  margin-left: auto;
+}
+.file-preview:hover { color: var(--accent); border-color: var(--accent); }
 
 .file-del {
   background: none;
