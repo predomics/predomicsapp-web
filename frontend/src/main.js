@@ -17,11 +17,13 @@ axios.interceptors.response.use(
     const status = error.response?.status
     // Skip 401 (handled by auth store) and cancelled requests
     if (status !== 401 && !axios.isCancel(error)) {
-      const msg = error.response?.data?.error?.message
-        || error.response?.data?.detail
-        || error.message
-        || 'Network error'
-      addToast(msg, status >= 500 ? 'error' : 'warning')
+      const msg = status === 429
+        ? 'Too many requests — please slow down'
+        : (error.response?.data?.error?.message
+          || error.response?.data?.detail
+          || error.message
+          || 'Network error')
+      addToast(msg, status === 429 ? 'warning' : (status >= 500 ? 'error' : 'warning'))
     }
     return Promise.reject(error)
   },

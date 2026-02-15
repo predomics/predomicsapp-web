@@ -1,6 +1,16 @@
 <template>
   <div class="params-tab">
     <form @submit.prevent="batchMode ? launchBatch() : launch()" novalidate>
+      <!-- Template loader -->
+      <div class="template-bar" v-if="templates.length > 0">
+        <label class="template-label">Load Template:</label>
+        <select v-model="selectedTemplate" @change="applyTemplate" class="template-select">
+          <option value="">— Select a template —</option>
+          <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
+        </select>
+        <span v-if="templateMsg" class="template-msg">{{ templateMsg }}</span>
+      </div>
+
       <div class="settings-grid">
         <!-- Left column: General, CV, Data filtering summary -->
         <div class="settings-col">
@@ -101,7 +111,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useProjectStore } from '../stores/project'
 import { useConfigStore } from '../stores/config'
@@ -117,6 +127,33 @@ const launching = ref(false)
 const jobName = ref('')
 const batchMode = ref(false)
 const batchResult = ref(null)
+
+// Templates
+const templates = ref([])
+const selectedTemplate = ref('')
+const templateMsg = ref('')
+
+async function fetchTemplates() {
+  try {
+    const { data } = await axios.get('/api/templates/public')
+    templates.value = data
+  } catch { /* ignore */ }
+}
+
+function applyTemplate() {
+  const tpl = templates.value.find(t => t.id === selectedTemplate.value)
+  if (!tpl || !tpl.config) return
+  // Apply template config values to the form
+  for (const [section, params] of Object.entries(tpl.config)) {
+    if (cfg[section] && typeof params === 'object') {
+      Object.assign(cfg[section], params)
+    }
+  }
+  templateMsg.value = `Loaded "${tpl.name}"`
+  setTimeout(() => { templateMsg.value = '' }, 3000)
+}
+
+onMounted(() => { fetchTemplates() })
 
 // Sweepable parameters definition
 const sweepableParams = [
@@ -282,6 +319,35 @@ async function launchBatch() {
 
 <style scoped>
 .params-tab { max-width: 100%; }
+
+.template-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-badge);
+  border-radius: 6px;
+}
+.template-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.template-select {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: var(--bg-input);
+  color: var(--text-body);
+  min-width: 200px;
+}
+.template-msg {
+  font-size: 0.8rem;
+  color: var(--success-dark, #2e7d32);
+}
 
 .settings-grid {
   display: grid;

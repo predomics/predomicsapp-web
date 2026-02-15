@@ -19,6 +19,7 @@ os.environ["PREDOMICS_SAMPLE_DIR"] = os.path.join(_tmp, "samples")
 _db_path = os.path.join(_tmp, "test.db")
 os.environ["PREDOMICS_DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path}"
 os.environ["PREDOMICS_SECRET_KEY"] = "test-secret-key"
+os.environ["PREDOMICS_RATE_LIMIT_ENABLED"] = "false"
 
 from app.main import app  # noqa: E402
 from app.core.database import engine, Base, get_db, async_session_factory, sync_engine  # noqa: E402

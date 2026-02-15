@@ -196,6 +196,28 @@
       <p v-else-if="detail.best_individual" class="info-text">
         Feature importance not available. Enable "Compute importance" in the Parameters tab to include MDA analysis.
       </p>
+
+      <!-- Coefficient direction chart -->
+      <section class="section" v-if="detail.best_individual">
+        <h3>Coefficient Direction</h3>
+        <div ref="directionChartEl" class="plotly-chart"></div>
+      </section>
+
+      <!-- Feature contribution waterfall -->
+      <section class="section" v-if="detail.best_individual">
+        <h3>Feature Contribution Waterfall</h3>
+        <div ref="waterfallChartEl" class="plotly-chart"></div>
+      </section>
+
+      <!-- Per-sample contribution heatmap -->
+      <section class="section" v-if="detail.best_individual">
+        <h3>Per-Sample Feature Contributions</h3>
+        <button v-if="!contributionData && !contributionLoading" class="btn-sm btn-outline" @click="loadContributionHeatmap">
+          Compute Contributions
+        </button>
+        <div v-if="contributionLoading" class="loading">Computing per-sample contributions...</div>
+        <div v-if="contributionData" ref="contributionHeatmapEl" class="plotly-chart plotly-chart-tall"></div>
+      </section>
     </div>
 
     <!-- ============================================================ -->
@@ -626,6 +648,11 @@ const fitEvolutionChartEl = ref(null)
 const radarChartEl = ref(null)
 const coefficientsChartEl = ref(null)
 const importanceChartEl = ref(null)
+const directionChartEl = ref(null)
+const waterfallChartEl = ref(null)
+const contributionHeatmapEl = ref(null)
+const contributionData = ref(null)
+const contributionLoading = ref(false)
 // Population
 const featureHeatmapEl = ref(null)
 const featurePrevalenceEl = ref(null)
@@ -1051,10 +1078,135 @@ async function renderImportanceChart() {
   }), { responsive: true, displayModeBar: false })
 }
 
+async function renderDirectionChart() {
+  await nextTick()
+  if (!directionChartEl.value || !detail.value?.best_individual) return
+  const c = chartColors()
+  const b = detail.value.best_individual
+  const entries = Object.entries(b.features).map(([idx, coef]) => ({
+    name: featureLabel(featureName(parseInt(idx))),
+    coef: parseFloat(coef),
+  }))
+  entries.sort((a, bb) => a.coef - bb.coef)
+
+  const posEntries = entries.filter(e => e.coef > 0)
+  const negEntries = entries.filter(e => e.coef <= 0)
+  const traces = []
+  if (negEntries.length) {
+    traces.push({
+      type: 'bar', orientation: 'h', name: 'Negative',
+      y: negEntries.map(e => e.name), x: negEntries.map(e => e.coef),
+      marker: { color: c.negativeAlpha, line: { color: c.negative, width: 1.5 } },
+      hovertemplate: '%{y}: %{x}<extra></extra>',
+    })
+  }
+  if (posEntries.length) {
+    traces.push({
+      type: 'bar', orientation: 'h', name: 'Positive',
+      y: posEntries.map(e => e.name), x: posEntries.map(e => e.coef),
+      marker: { color: c.positiveAlpha, line: { color: c.positive, width: 1.5 } },
+      hovertemplate: '%{y}: %{x}<extra></extra>',
+    })
+  }
+  Plotly.newPlot(directionChartEl.value, traces, chartLayout({
+    xaxis: { title: { text: 'Coefficient', font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.text, zerolinewidth: 1 },
+    yaxis: { automargin: true, color: c.text },
+    height: Math.max(250, entries.length * 28 + 60),
+    margin: { t: 10, b: 50, l: 180, r: 20 },
+    barmode: 'relative',
+    showlegend: true,
+    legend: { orientation: 'h', y: 1.08, font: { color: c.text } },
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderWaterfallChart() {
+  await nextTick()
+  if (!waterfallChartEl.value || !detail.value?.best_individual) return
+  const c = chartColors()
+  const b = detail.value.best_individual
+  const entries = Object.entries(b.features).map(([idx, coef]) => ({
+    name: featureLabel(featureName(parseInt(idx))),
+    coef: parseFloat(coef),
+  }))
+  entries.sort((a, bb) => Math.abs(bb.coef) - Math.abs(a.coef))
+
+  Plotly.newPlot(waterfallChartEl.value, [{
+    type: 'waterfall', orientation: 'v',
+    x: [...entries.map(e => e.name), 'Total'],
+    y: [...entries.map(e => e.coef), null],
+    measure: [...entries.map(() => 'relative'), 'total'],
+    connector: { line: { color: c.grid, width: 1 } },
+    increasing: { marker: { color: c.positiveAlpha, line: { color: c.positive, width: 1.5 } } },
+    decreasing: { marker: { color: c.negativeAlpha, line: { color: c.negative, width: 1.5 } } },
+    totals: { marker: { color: c.accent + '66', line: { color: c.accent, width: 1.5 } } },
+    hovertemplate: '%{x}: %{y}<extra></extra>',
+  }], chartLayout({
+    xaxis: { color: c.text, tickangle: -45 },
+    yaxis: { title: { text: 'Cumulative Contribution', font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+    height: 350,
+    margin: { t: 20, b: 120, l: 60, r: 20 },
+    showlegend: false,
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function loadContributionHeatmap() {
+  if (!detail.value?.best_individual) return
+  contributionLoading.value = true
+  try {
+    const pid = route.params.id
+    const b = detail.value.best_individual
+    const featureNames = Object.entries(b.features).map(([idx]) => featureName(parseInt(idx)))
+    const { data } = await axios.get(`/api/data-explore/${pid}/barcode-data`, {
+      params: { features: featureNames.join(','), max_samples: 200 }
+    })
+    // Compute contribution matrix: coefficient × feature_value
+    const coeffMap = {}
+    for (const [idx, coef] of Object.entries(b.features)) {
+      coeffMap[featureName(parseInt(idx))] = parseFloat(coef)
+    }
+    const features = data.features || []
+    const samples = data.sample_names || []
+    const matrix = (data.matrix || []).map((row, fi) =>
+      row.map(val => val * (coeffMap[features[fi]] || 0))
+    )
+    contributionData.value = { features, samples, matrix }
+    await nextTick()
+    renderContributionHeatmap()
+  } catch (e) {
+    console.error('Failed to load contribution data:', e)
+  } finally {
+    contributionLoading.value = false
+  }
+}
+
+async function renderContributionHeatmap() {
+  await nextTick()
+  if (!contributionHeatmapEl.value || !contributionData.value) return
+  const c = chartColors()
+  const { features, samples, matrix } = contributionData.value
+  Plotly.newPlot(contributionHeatmapEl.value, [{
+    type: 'heatmap',
+    z: matrix,
+    x: samples,
+    y: features.map(f => featureLabel(f)),
+    colorscale: [[0, '#2166ac'], [0.5, '#f7f7f7'], [1, '#b2182b']],
+    zmid: 0,
+    hovertemplate: 'Sample: %{x}<br>Feature: %{y}<br>Contribution: %{z:.4f}<extra></extra>',
+  }], chartLayout({
+    xaxis: { color: c.text, showticklabels: samples.length <= 100, tickangle: -90, tickfont: { size: 8 } },
+    yaxis: { automargin: true, color: c.text },
+    height: Math.max(300, features.length * 25 + 100),
+    margin: { t: 10, b: 80, l: 180, r: 20 },
+  }), { responsive: true, displayModeBar: false })
+}
+
 function renderBestModelCharts() {
   renderCoefficientsChart()
   renderRadarChart()
   renderImportanceChart()
+  renderDirectionChart()
+  renderWaterfallChart()
+  if (contributionData.value) renderContributionHeatmap()
 }
 
 // ---------------------------------------------------------------------------
@@ -1949,6 +2101,7 @@ async function loadJobResults() {
       generationTracking.value = raw.generation_tracking || []
       juryData.value = raw.jury || null
       importanceData.value = raw.importance || null
+      contributionData.value = null
       // Reset filters for new job
       selectedLanguages.value = []
       selectedDataTypes.value = []

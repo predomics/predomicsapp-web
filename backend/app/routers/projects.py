@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from ..core.database import get_db
 from ..core.deps import get_current_user, get_project_with_access
 from ..models.db_models import User, Project, Dataset, DatasetFile, ProjectDataset
+from ..services import audit
 from ..models.schemas import ProjectInfo, DatasetInfo, DatasetRef, DatasetFileRef
 from ..services import storage
 from .datasets import _infer_role
@@ -78,6 +79,7 @@ async def create_project(
 
     # Create filesystem directories
     storage.ensure_project_dirs(project.id)
+    await audit.log_action(db, user, audit.ACTION_PROJECT_CREATE, "project", project.id)
 
     return ProjectInfo(
         project_id=project.id,
@@ -142,6 +144,7 @@ async def delete_project(
 ):
     """Delete a project (owner only). Datasets stay in user library."""
     project, _ = await get_project_with_access(project_id, user, db, require_role="owner")
+    await audit.log_action(db, user, audit.ACTION_PROJECT_DELETE, "project", project_id)
     await db.delete(project)
     storage.delete_project_files(project_id)
     return {"status": "deleted"}

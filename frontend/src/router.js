@@ -8,6 +8,18 @@ const routes = [
     meta: { guest: true },
   },
   {
+    path: '/forgot-password',
+    name: 'ForgotPassword',
+    component: () => import('./views/ForgotPasswordView.vue'),
+    meta: { guest: true },
+  },
+  {
+    path: '/reset-password',
+    name: 'ResetPassword',
+    component: () => import('./views/ResetPasswordView.vue'),
+    meta: { guest: true },
+  },
+  {
     path: '/',
     name: 'Home',
     component: () => import('./views/HomeView.vue'),

@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from ..core.database import get_db, sync_session_factory
 from ..core.deps import get_current_user, get_project_with_access
-from ..models.db_models import User, Job, DatasetFile
+from ..models.db_models import User, Job, DatasetFile, Webhook
 from ..models.schemas import (
     RunConfig,
     BatchSweepConfig,
@@ -27,7 +27,8 @@ from ..models.schemas import (
     IndividualResponse,
     JobStatus,
 )
-from ..services import engine, storage
+from ..services import engine, storage, audit
+from ..services.webhooks import send_webhook_sync
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -108,8 +109,11 @@ async def run_analysis(
         output_dir=str(job_dir),
     )
 
+    await audit.log_action(db, user, audit.ACTION_JOB_LAUNCH, "job", job.id,
+                           details={"project_id": project_id})
+
     # Run in background thread
-    background_tasks.add_task(_run_job, job.id, project_id, param_path)
+    background_tasks.add_task(_run_job, job.id, project_id, param_path, user.id)
 
     return ExperimentSummary(job_id=job.id, name=job.name, status=JobStatus.pending)
 
@@ -217,7 +221,7 @@ async def run_batch(
             output_dir=str(job_dir),
         )
 
-        background_tasks.add_task(_run_job, job.id, project_id, param_path)
+        background_tasks.add_task(_run_job, job.id, project_id, param_path, user.id)
         job_summaries.append({"job_id": job.id, "name": job_name})
 
     await db.commit()
@@ -276,7 +280,25 @@ async def list_batches(
     return summaries
 
 
-def _run_job(job_id: str, project_id: str, param_path: str) -> None:
+def _fire_webhooks(user_id: str, event: str, payload: dict) -> None:
+    """Fire matching webhooks for a user (sync, called from background thread)."""
+    try:
+        with sync_session_factory() as db:
+            result = db.execute(
+                select(Webhook).where(
+                    Webhook.user_id == user_id,
+                    Webhook.is_active.is_(True),
+                )
+            )
+            webhooks = result.scalars().all()
+            for wh in webhooks:
+                if event in (wh.events or []):
+                    send_webhook_sync(wh.url, payload, wh.secret, retries=2)
+    except Exception as exc:
+        logger.warning("Webhook delivery error: %s", exc)
+
+
+def _run_job(job_id: str, project_id: str, param_path: str, user_id: str = "") -> None:
     """Execute gpredomics in a subprocess so we can capture Rust log output.
 
     Runs in a Starlette thread pool — uses synchronous DB sessions to avoid
@@ -311,6 +333,11 @@ def _run_job(job_id: str, project_id: str, param_path: str) -> None:
                 job.completed_at = datetime.now(timezone.utc)
                 job.disk_size_bytes = _job_disk_size(project_id, job_id)
                 db.commit()
+
+            if user_id:
+                _fire_webhooks(user_id, "job.completed", {
+                    "event": "job.completed", "job_id": job_id, "project_id": project_id,
+                })
             return
 
         # Run worker subprocess — stream output line-by-line for live console
@@ -348,6 +375,11 @@ def _run_job(job_id: str, project_id: str, param_path: str) -> None:
 
         logger.info("Job %s completed", job_id)
 
+        if user_id:
+            _fire_webhooks(user_id, "job.completed", {
+                "event": "job.completed", "job_id": job_id, "project_id": project_id,
+            })
+
     except Exception as e:
         # Append error to log
         with open(log_path, "a") as lf:
@@ -361,6 +393,12 @@ def _run_job(job_id: str, project_id: str, param_path: str) -> None:
             db.commit()
 
         logger.error("Job %s failed: %s", job_id, e)
+
+        if user_id:
+            _fire_webhooks(user_id, "job.failed", {
+                "event": "job.failed", "job_id": job_id, "project_id": project_id,
+                "error": str(e),
+            })
 
 
 @router.get("/{project_id}/jobs/duplicates")
@@ -575,6 +613,9 @@ async def delete_job(
 
     if job.status == "running":
         raise HTTPException(status_code=409, detail="Cannot delete a running job")
+
+    await audit.log_action(db, user, audit.ACTION_JOB_DELETE, "job", job_id,
+                           details={"project_id": project_id})
 
     # Remove results files from disk
     job_dir = Path(storage.settings.project_dir) / project_id / "jobs" / job_id

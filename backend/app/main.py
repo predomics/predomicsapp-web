@@ -14,7 +14,7 @@ from sqlalchemy import text
 from .core.config import settings
 from .core.database import engine, Base
 from .models import db_models  # noqa: F401 — ensure models are registered
-from .routers import health, projects, analysis, auth, samples, datasets, sharing, admin, data_explore, export, websocket
+from .routers import health, projects, analysis, auth, samples, datasets, sharing, admin, data_explore, export, websocket, templates, webhook_router
 from .routers.datasets import _infer_role
 from .services.storage import ensure_dirs
 
@@ -668,6 +668,105 @@ async def _migrate_add_job_batch_id(conn):
     _log.info("Migration v10_job_batch_id complete")
 
 
+async def _migrate_add_audit_log(conn):
+    """v11: Create audit_logs table."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v11_audit_log'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+    _log.info("Migration v11: audit log — starting")
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v11_audit_log', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v11_audit_log complete")
+
+
+async def _migrate_add_password_reset(conn):
+    """v12: Add password_reset_tokens table and email_verified column."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v12_password_reset'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+    _log.info("Migration v12: password reset — starting")
+    # Add email_verified column to users if missing
+    r = await conn.execute(text(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'users' AND column_name = 'email_verified'"
+    ))
+    if not r.scalar():
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT FALSE"
+        ))
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v12_password_reset', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v12_password_reset complete")
+
+
+async def _migrate_add_api_keys(conn):
+    """v13: Create api_keys table."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v13_api_keys'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+    _log.info("Migration v13: api keys — starting")
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v13_api_keys', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v13_api_keys complete")
+
+
+async def _migrate_add_webhooks(conn):
+    """v14: Create webhooks table."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v14_webhooks'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+    _log.info("Migration v14: webhooks — starting")
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v14_webhooks', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v14_webhooks complete")
+
+
+async def _migrate_add_dataset_versions(conn):
+    """v15: Create dataset_versions table."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v15_dataset_versions'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+    _log.info("Migration v15: dataset versions — starting")
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v15_dataset_versions', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v15_dataset_versions complete")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown events."""
@@ -694,6 +793,16 @@ async def lifespan(app: FastAPI):
         await _migrate_add_dataset_tags(conn)
     async with engine.begin() as conn:
         await _migrate_add_job_batch_id(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_audit_log(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_password_reset(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_api_keys(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_webhooks(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_dataset_versions(conn)
     _log.info("PredomicsApp started — data_dir=%s", settings.data_dir)
     yield
 
@@ -723,6 +832,13 @@ from .core.errors import http_error_handler, generic_error_handler  # noqa: E402
 app.add_exception_handler(HTTPException, http_error_handler)
 app.add_exception_handler(Exception, generic_error_handler)
 
+# Rate limiting
+from .core.rate_limit import limiter  # noqa: E402
+from slowapi.errors import RateLimitExceeded  # noqa: E402
+from slowapi import _rate_limit_exceeded_handler  # noqa: E402
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Register routers
 # Note: sharing must come before projects so /shared-with-me is matched
 # before the /{project_id} catch-all pattern in the projects router.
@@ -736,6 +852,8 @@ app.include_router(datasets.router, prefix="/api")
 app.include_router(data_explore.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
+app.include_router(templates.router, prefix="/api")
+app.include_router(webhook_router.router, prefix="/api")
 app.include_router(websocket.router)  # WebSocket (no /api prefix, uses /ws/)
 
 # Serve Vue.js frontend (production: built into backend/static/)

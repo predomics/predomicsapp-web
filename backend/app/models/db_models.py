@@ -135,3 +135,80 @@ class SchemaVersion(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     version: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class AuditLog(Base):
+    """Track user actions for admin review."""
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String(12), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    resource_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    resource_id: Mapped[Optional[str]] = mapped_column(String(12), nullable=True)
+    details: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+    user: Mapped[Optional["User"]] = relationship()
+
+
+class PasswordResetToken(Base):
+    """Token for self-service password reset."""
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    user: Mapped["User"] = relationship()
+
+
+class ApiKey(Base):
+    """User API keys for programmatic access."""
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    prefix: Mapped[str] = mapped_column(String(8), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    user: Mapped["User"] = relationship()
+
+
+class Webhook(Base):
+    """User webhook for external notifications."""
+    __tablename__ = "webhooks"
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    url: Mapped[str] = mapped_column(String(500), nullable=False)
+    events: Mapped[Optional[list]] = mapped_column(JSON, default=lambda: ["job.completed", "job.failed"])
+    secret: Mapped[str] = mapped_column(String(64), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    user: Mapped["User"] = relationship()
+
+
+class DatasetVersion(Base):
+    """Snapshot of dataset files at a point in time."""
+    __tablename__ = "dataset_versions"
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True, default=_new_id)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    files_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_by: Mapped[Optional[str]] = mapped_column(String(12), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    dataset: Mapped["Dataset"] = relationship()

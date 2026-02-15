@@ -5,16 +5,17 @@ import statistics
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Query, Body
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..core.database import get_db
 from ..core.deps import get_current_user
-from ..models.db_models import User, Dataset, DatasetFile, ProjectDataset, Project
+from ..core.rate_limit import limiter
+from ..models.db_models import User, Dataset, DatasetFile, ProjectDataset, Project, DatasetVersion
 from ..models.schemas import DatasetResponse, DatasetFileRef
-from ..services import storage
+from ..services import storage, audit
 
 # Pre-defined tag suggestions
 SUGGESTED_TAGS = [
@@ -24,6 +25,34 @@ SUGGESTED_TAGS = [
 ]
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
+
+
+async def _create_version_snapshot(db: AsyncSession, dataset_id: str, user_id: str, note: str = "") -> None:
+    """Create a version snapshot of the current files in a dataset."""
+    result = await db.execute(
+        select(DatasetFile).where(DatasetFile.dataset_id == dataset_id)
+    )
+    files = result.scalars().all()
+    snapshot = [
+        {"id": f.id, "filename": f.filename, "role": f.role, "disk_path": f.disk_path}
+        for f in files
+    ]
+    # Get next version number
+    ver_result = await db.execute(
+        select(func.coalesce(func.max(DatasetVersion.version_number), 0))
+        .where(DatasetVersion.dataset_id == dataset_id)
+    )
+    next_ver = ver_result.scalar() + 1
+
+    version = DatasetVersion(
+        dataset_id=dataset_id,
+        version_number=next_ver,
+        files_snapshot=snapshot,
+        created_by=user_id,
+        note=note,
+    )
+    db.add(version)
+    await db.flush()
 
 
 def _infer_role(filename: str) -> Optional[str]:
@@ -205,7 +234,9 @@ async def update_tags(
 # ---------------------------------------------------------------------------
 
 @router.post("/{dataset_id}/files", response_model=DatasetFileRef)
+@limiter.limit("20/minute")
 async def upload_file(
+    request: Request,
     dataset_id: str,
     file: UploadFile = File(...),
     role: Optional[str] = None,
@@ -238,6 +269,10 @@ async def upload_file(
     disk_path = storage.save_user_dataset_file(user.id, ds_file.id, file.filename, content)
     ds_file.disk_path = disk_path
 
+    await _create_version_snapshot(db, dataset_id, user.id, note=f"Upload {file.filename}")
+    await audit.log_action(db, user, audit.ACTION_DATASET_UPLOAD, "dataset_file", ds_file.id,
+                           details={"filename": file.filename, "dataset_id": dataset_id})
+
     return DatasetFileRef(id=ds_file.id, filename=ds_file.filename, role=ds_file.role)
 
 
@@ -262,8 +297,15 @@ async def delete_file(
     if not ds_file:
         raise HTTPException(status_code=404, detail="File not found")
 
+    filename = ds_file.filename
     storage.delete_user_dataset_file(ds_file.disk_path)
     await db.delete(ds_file)
+    await db.flush()
+
+    await _create_version_snapshot(db, dataset_id, user.id, note=f"Delete {filename}")
+    await audit.log_action(db, user, audit.ACTION_DATASET_DELETE, "dataset_file", file_id,
+                           details={"filename": filename, "dataset_id": dataset_id})
+
     return {"status": "deleted"}
 
 
@@ -411,3 +453,92 @@ async def unassign_dataset(
 
     await db.delete(link)
     return {"status": "unassigned"}
+
+
+# ---------------------------------------------------------------------------
+# Dataset versioning
+# ---------------------------------------------------------------------------
+
+@router.get("/{dataset_id}/versions")
+async def list_versions(
+    dataset_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all version snapshots for a dataset."""
+    result = await db.execute(
+        select(Dataset).where(Dataset.id == dataset_id, Dataset.user_id == user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    result = await db.execute(
+        select(DatasetVersion)
+        .where(DatasetVersion.dataset_id == dataset_id)
+        .order_by(DatasetVersion.version_number.desc())
+    )
+    versions = result.scalars().all()
+    return [
+        {
+            "id": v.id,
+            "version_number": v.version_number,
+            "files_snapshot": v.files_snapshot,
+            "note": v.note,
+            "created_at": v.created_at.isoformat(),
+        }
+        for v in versions
+    ]
+
+
+@router.post("/{dataset_id}/versions/{version_id}/restore")
+async def restore_version(
+    dataset_id: str,
+    version_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore a dataset to a previous version snapshot.
+
+    Only restores file records that still exist on disk. Missing files are skipped.
+    """
+    result = await db.execute(
+        select(Dataset)
+        .where(Dataset.id == dataset_id, Dataset.user_id == user.id)
+        .options(selectinload(Dataset.files))
+    )
+    dataset = result.scalar_one_or_none()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    ver_result = await db.execute(
+        select(DatasetVersion).where(
+            DatasetVersion.id == version_id,
+            DatasetVersion.dataset_id == dataset_id,
+        )
+    )
+    version = ver_result.scalar_one_or_none()
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    # Remove current files (don't delete from disk — they may be referenced by other versions)
+    for f in dataset.files:
+        await db.delete(f)
+    await db.flush()
+
+    # Re-create file records from snapshot
+    restored = 0
+    for snap in version.files_snapshot or []:
+        if Path(snap.get("disk_path", "")).exists():
+            ds_file = DatasetFile(
+                dataset_id=dataset_id,
+                filename=snap["filename"],
+                role=snap.get("role"),
+                disk_path=snap["disk_path"],
+            )
+            db.add(ds_file)
+            restored += 1
+    await db.flush()
+
+    await _create_version_snapshot(db, dataset_id, user.id, note=f"Restore to v{version.version_number}")
+
+    return {"status": "restored", "version_number": version.version_number, "files_restored": restored}

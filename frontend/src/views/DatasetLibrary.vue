@@ -80,6 +80,23 @@
           </div>
         </div>
 
+        <!-- Version history toggle -->
+        <div class="version-bar">
+          <button class="version-toggle" @click="toggleVersions(d)">
+            {{ expandedVersions === d.id ? 'Hide History' : 'History' }}
+          </button>
+          <span v-if="d._versions?.length > 0" class="version-count">{{ d._versions.length }} version{{ d._versions.length !== 1 ? 's' : '' }}</span>
+        </div>
+        <div v-if="expandedVersions === d.id && d._versions" class="version-list">
+          <div v-for="v in d._versions" :key="v.id" class="version-row">
+            <span class="ver-num">v{{ v.version_number }}</span>
+            <span class="ver-note">{{ v.note || '—' }}</span>
+            <span class="ver-date">{{ formatDate(v.created_at) }}</span>
+            <span class="ver-files">{{ v.files_snapshot?.length || 0 }} files</span>
+            <button class="ver-restore" @click="restoreVersion(d, v)">Restore</button>
+          </div>
+        </div>
+
         <!-- Upload file into group -->
         <label class="upload-into">
           + Add file
@@ -108,11 +125,13 @@
 
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
+import axios from 'axios'
 import { useDatasetStore } from '../stores/dataset'
 import DatasetPreviewModal from '../components/DatasetPreviewModal.vue'
 
 const store = useDatasetStore()
 const previewFile = ref(null)
+const expandedVersions = ref(null)
 
 function openPreview(datasetId, fileId, filename) {
   previewFile.value = { datasetId, fileId, filename }
@@ -223,6 +242,34 @@ async function deleteDs(d) {
     msgType.value = 'success'
   } catch (e) {
     message.value = e.response?.data?.detail || 'Delete failed'
+    msgType.value = 'error'
+  }
+}
+
+async function toggleVersions(d) {
+  if (expandedVersions.value === d.id) {
+    expandedVersions.value = null
+    return
+  }
+  try {
+    const { data } = await axios.get(`/api/datasets/${d.id}/versions`)
+    d._versions = data
+  } catch {
+    d._versions = []
+  }
+  expandedVersions.value = d.id
+}
+
+async function restoreVersion(d, v) {
+  if (!confirm(`Restore "${d.name}" to version ${v.version_number}? Current files will be replaced.`)) return
+  try {
+    await axios.post(`/api/datasets/${d.id}/versions/${v.id}/restore`)
+    message.value = `Restored to v${v.version_number}`
+    msgType.value = 'success'
+    await store.fetchDatasets(filterTag.value || null, searchQuery.value || null)
+    expandedVersions.value = null
+  } catch (e) {
+    message.value = e.response?.data?.detail || 'Restore failed'
     msgType.value = 'error'
   }
 }
@@ -551,4 +598,68 @@ onMounted(() => {
   padding: 3rem;
   color: var(--text-faint);
 }
+
+/* Version history */
+.version-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 1.25rem;
+  border-top: 1px solid var(--border-lighter);
+}
+.version-toggle {
+  background: none;
+  border: 1px solid var(--border-lighter);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.72rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+}
+.version-toggle:hover { color: var(--accent); border-color: var(--accent); }
+.version-count {
+  font-size: 0.7rem;
+  color: var(--text-faint);
+}
+.version-list {
+  padding: 0.25rem 1.25rem 0.5rem;
+}
+.version-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+  border-bottom: 1px solid var(--border-lighter);
+}
+.version-row:last-child { border-bottom: none; }
+.ver-num {
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 28px;
+}
+.ver-note {
+  flex: 1;
+  color: var(--text-body);
+}
+.ver-date {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.ver-files {
+  color: var(--text-faint);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+.ver-restore {
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.68rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+}
+.ver-restore:hover { background: var(--accent-faint, rgba(59,130,246,0.08)); }
 </style>

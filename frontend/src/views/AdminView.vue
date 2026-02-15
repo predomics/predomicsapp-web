@@ -99,6 +99,70 @@
       <span v-if="defaultsSaved" class="save-ok">Saved!</span>
     </div>
 
+    <!-- Project Templates Section -->
+    <h2 class="section-title">Project Templates</h2>
+    <p class="section-desc">Parameter presets available to all users in the Parameters tab.</p>
+
+    <div class="template-create">
+      <input v-model="tplName" placeholder="Template name" class="tpl-input" />
+      <input v-model="tplDesc" placeholder="Description (optional)" class="tpl-input tpl-desc" />
+      <button class="btn-save" @click="createTemplate" :disabled="!tplName.trim() || tplSaving">
+        {{ tplSaving ? 'Saving...' : 'Create Template' }}
+      </button>
+    </div>
+    <p class="section-desc">Template config is captured from current admin defaults. Edit defaults first, then create a template.</p>
+
+    <div v-if="tplTemplates.length > 0" class="tpl-list">
+      <div v-for="t in tplTemplates" :key="t.id" class="tpl-card">
+        <div class="tpl-info">
+          <strong>{{ t.name }}</strong>
+          <span v-if="t.description" class="tpl-desc-text">{{ t.description }}</span>
+        </div>
+        <button class="btn-delete" @click="deleteTemplate(t)">Delete</button>
+      </div>
+    </div>
+    <div v-else class="empty-state">No templates yet.</div>
+
+    <!-- Audit Log Section -->
+    <h2 class="section-title">Audit Log</h2>
+    <p class="section-desc">Track user actions across the system.</p>
+
+    <div class="audit-filters">
+      <select v-model="auditAction" @change="fetchAuditLog(1)" class="audit-select">
+        <option value="">All actions</option>
+        <option v-for="a in auditActions" :key="a" :value="a">{{ a }}</option>
+      </select>
+      <button class="btn-reset" @click="auditAction = ''; fetchAuditLog(1)">Clear</button>
+      <span class="audit-total" v-if="auditTotal > 0">{{ auditTotal }} entries</span>
+    </div>
+
+    <table v-if="auditEntries.length > 0" class="user-table audit-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>User</th>
+          <th>Action</th>
+          <th>Resource</th>
+          <th>Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="e in auditEntries" :key="e.id">
+          <td class="date">{{ new Date(e.created_at).toLocaleString() }}</td>
+          <td>{{ e.user_email || '—' }}</td>
+          <td><span class="audit-action">{{ e.action }}</span></td>
+          <td>{{ e.resource_type }}{{ e.resource_id ? ` #${e.resource_id.slice(0, 8)}` : '' }}</td>
+          <td class="audit-details">{{ e.details ? JSON.stringify(e.details).slice(0, 80) : '—' }}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div v-if="auditTotal > auditPerPage" class="audit-pagination">
+      <button :disabled="auditPage <= 1" @click="fetchAuditLog(auditPage - 1)">Prev</button>
+      <span>Page {{ auditPage }} / {{ Math.ceil(auditTotal / auditPerPage) }}</span>
+      <button :disabled="auditPage >= Math.ceil(auditTotal / auditPerPage)" @click="fetchAuditLog(auditPage + 1)">Next</button>
+    </div>
+
     <!-- System Backup & Restore Section -->
     <h2 class="section-title">System Backup &amp; Restore</h2>
     <p class="section-desc">Create full system backups (database + files) or restore from a previous backup.</p>
@@ -392,10 +456,88 @@ function formatBackupDate(iso) {
   return new Date(iso).toLocaleString()
 }
 
+// ---------------------------------------------------------------------------
+// Templates
+// ---------------------------------------------------------------------------
+
+const tplTemplates = ref([])
+const tplName = ref('')
+const tplDesc = ref('')
+const tplSaving = ref(false)
+
+async function fetchTemplates() {
+  try {
+    const { data } = await axios.get('/api/templates/')
+    tplTemplates.value = data
+  } catch { /* ignore */ }
+}
+
+async function createTemplate() {
+  if (!tplName.value.trim()) return
+  tplSaving.value = true
+  try {
+    // Use current defaults as the template config
+    const clean = {}
+    for (const [k, v] of Object.entries(defaults)) {
+      if (v !== undefined && v !== '' && v !== null) clean[k] = v
+    }
+    await axios.post('/api/templates/', {
+      name: tplName.value.trim(),
+      description: tplDesc.value.trim(),
+      config: clean,
+    })
+    tplName.value = ''
+    tplDesc.value = ''
+    await fetchTemplates()
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to create template')
+  } finally {
+    tplSaving.value = false
+  }
+}
+
+async function deleteTemplate(t) {
+  if (!confirm(`Delete template "${t.name}"?`)) return
+  try {
+    await axios.delete(`/api/templates/${t.id}`)
+    await fetchTemplates()
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to delete template')
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Audit Log
+// ---------------------------------------------------------------------------
+
+const auditEntries = ref([])
+const auditTotal = ref(0)
+const auditPage = ref(1)
+const auditPerPage = 50
+const auditAction = ref('')
+const auditActions = [
+  'login', 'register', 'job.launch', 'job.delete',
+  'dataset.upload', 'dataset.delete', 'project.create', 'project.delete',
+  'share.create', 'share.revoke', 'admin.user_delete',
+]
+
+async function fetchAuditLog(page = 1) {
+  auditPage.value = page
+  try {
+    const params = { page, per_page: auditPerPage }
+    if (auditAction.value) params.action = auditAction.value
+    const { data } = await axios.get('/api/admin/audit-log', { params })
+    auditEntries.value = data.entries
+    auditTotal.value = data.total
+  } catch { /* ignore */ }
+}
+
 onMounted(() => {
   fetchUsers()
   fetchDefaults()
   fetchBackups()
+  fetchTemplates()
+  fetchAuditLog()
 })
 </script>
 
@@ -643,5 +785,110 @@ onMounted(() => {
   padding: 2rem;
   color: var(--text-muted);
   font-size: 0.9rem;
+}
+
+/* Templates */
+.template-create {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.tpl-input {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: var(--bg-input);
+  color: var(--text-body);
+  min-width: 160px;
+}
+.tpl-desc { flex: 1; }
+.tpl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+}
+.tpl-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-card);
+  border-radius: 6px;
+  border: 1px solid var(--border-lighter);
+}
+.tpl-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.tpl-desc-text {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* Audit Log */
+.audit-filters {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+.audit-select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: var(--bg-input);
+  color: var(--text-body);
+  min-width: 160px;
+}
+.audit-total {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+.audit-action {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: var(--bg-badge);
+  color: var(--text-secondary);
+}
+.audit-details {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.audit-table { margin-bottom: 0.5rem; }
+.audit-pagination {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 0 1rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+.audit-pagination button {
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.audit-pagination button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 </style>
