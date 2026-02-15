@@ -62,15 +62,15 @@ describe('PARAM_DEFS', () => {
   })
 
   it('inputType is a valid type', () => {
-    const validTypes = ['text', 'number', 'select', 'checkbox']
+    const validTypes = ['text', 'number', 'select', 'checkbox', 'checkboxGroup']
     for (const p of PARAM_DEFS) {
       expect(validTypes).toContain(p.inputType)
     }
   })
 
-  it('select inputs have options array', () => {
+  it('select and checkboxGroup inputs have options array', () => {
     for (const p of PARAM_DEFS) {
-      if (p.inputType === 'select') {
+      if (p.inputType === 'select' || p.inputType === 'checkboxGroup') {
         expect(Array.isArray(p.options)).toBe(true)
         expect(p.options.length).toBeGreaterThan(0)
         for (const opt of p.options) {

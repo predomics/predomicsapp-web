@@ -35,12 +35,23 @@ export const PARAM_DEFS = [
     ],
   },
   {
-    key: 'language', label: 'Language', category: 'general', level: 'basic', inputType: 'text', defaultValue: 'bin,ter,ratio',
-    description: 'Model languages: bin (binary), ter (ternary), ratio, pow2. Comma-separated list; initial population is split among them.',
+    key: 'language', label: 'Language', category: 'general', level: 'basic', inputType: 'checkboxGroup', defaultValue: 'bin,ter,ratio',
+    description: 'Model languages to explore. Initial population is split among selected languages.',
+    options: [
+      { value: 'bin', label: 'Binary' },
+      { value: 'ter', label: 'Ternary' },
+      { value: 'ratio', label: 'Ratio' },
+      { value: 'pow2', label: 'Power of 2' },
+    ],
   },
   {
-    key: 'data_type', label: 'Data type', category: 'general', level: 'basic', inputType: 'text', defaultValue: 'raw,prev',
-    description: 'Data transformations: raw, prev (prevalence), log. Comma-separated list accepted.',
+    key: 'data_type', label: 'Data type', category: 'general', level: 'basic', inputType: 'checkboxGroup', defaultValue: 'raw,prev',
+    description: 'Data transformations to apply. Multiple selections create separate model populations.',
+    options: [
+      { value: 'raw', label: 'Raw' },
+      { value: 'prev', label: 'Prevalence' },
+      { value: 'log', label: 'Log' },
+    ],
   },
   {
     key: 'seed', label: 'Random seed', category: 'general', level: 'basic', inputType: 'number', defaultValue: 42,
