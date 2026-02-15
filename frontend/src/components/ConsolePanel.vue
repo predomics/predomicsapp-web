@@ -24,6 +24,9 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import axios from 'axios'
+import { useAuthStore } from '../stores/auth'
+
+const auth = useAuthStore()
 
 const props = defineProps({
   projectId: { type: String, required: true },
@@ -37,6 +40,8 @@ const jobStatus = ref('pending')
 const consoleEl = ref(null)
 const progress = ref({ generation: 0, maxGen: 0, k: 0, language: '' })
 let pollTimer = null
+let ws = null
+let wsConnected = false
 
 let errorCount = 0
 
@@ -119,7 +124,62 @@ async function fetchMaxEpochs() {
   } catch { /* ignore */ }
 }
 
-/* ── Polling ─────────────────────────────────────────── */
+/* ── WebSocket ───────────────────────────────────────── */
+function getWsUrl() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${location.host}/ws/jobs/${props.projectId}/${props.jobId}?token=${auth.token}`
+}
+
+function connectWebSocket() {
+  if (!auth.token) { startPolling(); return }
+  try {
+    ws = new WebSocket(getWsUrl())
+
+    ws.onopen = () => {
+      wsConnected = true
+      stopPolling()  // WS is live, stop HTTP polling
+    }
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data)
+      if (msg.type === 'log') {
+        logContent.value += msg.content
+        parseProgress(logContent.value)
+        nextTick(() => {
+          if (consoleEl.value) consoleEl.value.scrollTop = consoleEl.value.scrollHeight
+        })
+      } else if (msg.type === 'status') {
+        jobStatus.value = msg.status
+      } else if (msg.type === 'done') {
+        jobStatus.value = msg.status
+        if (msg.status === 'completed') emit('completed', props.jobId)
+        else if (msg.status === 'failed') emit('failed', props.jobId)
+        closeWebSocket()
+      }
+    }
+
+    ws.onerror = () => {
+      closeWebSocket()
+      if (!wsConnected) startPolling()  // WS never connected, fall back
+    }
+
+    ws.onclose = () => {
+      ws = null
+      if (wsConnected && (jobStatus.value === 'running' || jobStatus.value === 'pending')) {
+        wsConnected = false
+        startPolling()  // Unexpected close, fall back to polling
+      }
+    }
+  } catch {
+    startPolling()
+  }
+}
+
+function closeWebSocket() {
+  if (ws) { try { ws.close() } catch { /* ignore */ } ws = null }
+}
+
+/* ── HTTP Polling (fallback) ─────────────────────────── */
 async function pollLogs() {
   try {
     const { data } = await axios.get(`/api/analysis/${props.projectId}/jobs/${props.jobId}/logs`)
@@ -152,6 +212,7 @@ async function pollLogs() {
 }
 
 function startPolling() {
+  if (pollTimer) return  // Already polling
   fetchMaxEpochs()
   pollLogs()
   pollTimer = setInterval(pollLogs, 1000)
@@ -164,18 +225,32 @@ function stopPolling() {
   }
 }
 
+/* ── Lifecycle ───────────────────────────────────────── */
+function startConsole() {
+  fetchMaxEpochs()
+  connectWebSocket()
+  // Start polling as initial fallback; will be stopped if WS connects
+  startPolling()
+}
+
+function stopConsole() {
+  stopPolling()
+  closeWebSocket()
+  wsConnected = false
+}
+
 watch(() => props.jobId, (newId) => {
   if (newId) {
     logContent.value = ''
     jobStatus.value = 'pending'
     progress.value = { generation: 0, maxGen: 0, k: 0, language: '' }
-    stopPolling()
-    startPolling()
+    stopConsole()
+    startConsole()
   }
 })
 
-onMounted(startPolling)
-onUnmounted(stopPolling)
+onMounted(startConsole)
+onUnmounted(stopConsole)
 </script>
 
 <style scoped>

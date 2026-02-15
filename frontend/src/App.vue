@@ -27,6 +27,7 @@
       <router-view />
     </main>
     <OnboardingTour v-if="auth.isLoggedIn" />
+    <ToastContainer />
   </div>
 </template>
 
@@ -36,6 +37,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import { useThemeStore } from './stores/theme'
 import OnboardingTour from './components/OnboardingTour.vue'
+import ToastContainer from './components/ToastContainer.vue'
 
 const auth = useAuthStore()
 const theme = useThemeStore()

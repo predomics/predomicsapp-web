@@ -14,7 +14,7 @@ from sqlalchemy import text
 from .core.config import settings
 from .core.database import engine, Base
 from .models import db_models  # noqa: F401 — ensure models are registered
-from .routers import health, projects, analysis, auth, samples, datasets, sharing, admin, data_explore, export
+from .routers import health, projects, analysis, auth, samples, datasets, sharing, admin, data_explore, export, websocket
 from .routers.datasets import _infer_role
 from .services.storage import ensure_dirs
 
@@ -714,6 +714,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# GZip compression for large JSON responses
+from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# Structured error responses
+from .core.errors import http_error_handler, generic_error_handler  # noqa: E402
+app.add_exception_handler(HTTPException, http_error_handler)
+app.add_exception_handler(Exception, generic_error_handler)
+
 # Register routers
 # Note: sharing must come before projects so /shared-with-me is matched
 # before the /{project_id} catch-all pattern in the projects router.
@@ -727,6 +736,7 @@ app.include_router(datasets.router, prefix="/api")
 app.include_router(data_explore.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
+app.include_router(websocket.router)  # WebSocket (no /api prefix, uses /ws/)
 
 # Serve Vue.js frontend (production: built into backend/static/)
 _static_dir = Path(__file__).parent / "static"

@@ -561,7 +561,15 @@ import { useRoute } from 'vue-router'
 import { useProjectStore } from '../stores/project'
 import { useChartTheme } from '../composables/useChartTheme'
 import axios from 'axios'
-import Plotly from 'plotly.js-dist-min'
+// Lazy-load Plotly for better initial page load
+let Plotly = null
+async function ensurePlotly() {
+  if (!Plotly) {
+    const mod = await import('plotly.js-dist-min')
+    Plotly = mod.default
+  }
+  return Plotly
+}
 
 const route = useRoute()
 const store = useProjectStore()
@@ -1985,7 +1993,8 @@ async function loadJobList() {
   }
 }
 
-function renderActiveTab() {
+async function renderActiveTab() {
+  await ensurePlotly()
   if (subTab.value === 'summary') renderSummaryCharts()
   else if (subTab.value === 'bestmodel') renderBestModelCharts()
   else if (subTab.value === 'population') renderPopulationCharts()

@@ -1,5 +1,8 @@
 """Dataset library endpoints — composite dataset CRUD and project assignment."""
 
+import csv
+import statistics
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Body
@@ -262,6 +265,85 @@ async def delete_file(
     storage.delete_user_dataset_file(ds_file.disk_path)
     await db.delete(ds_file)
     return {"status": "deleted"}
+
+
+@router.get("/{dataset_id}/files/{file_id}/preview")
+async def preview_file(
+    dataset_id: str,
+    file_id: str,
+    rows: int = Query(20, ge=1, le=100),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Preview first N rows of a dataset file with basic statistics."""
+    result = await db.execute(
+        select(DatasetFile)
+        .join(Dataset)
+        .where(
+            DatasetFile.id == file_id,
+            DatasetFile.dataset_id == dataset_id,
+            Dataset.user_id == user.id,
+        )
+    )
+    ds_file = result.scalar_one_or_none()
+    if not ds_file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    file_path = Path(ds_file.disk_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File data not found on disk")
+
+    # Detect delimiter from first 4KB
+    sample = file_path.read_text(errors="replace")[:4096]
+    delimiter = "\t" if "\t" in sample else ","
+
+    all_rows = []
+    with open(file_path, "r", errors="replace") as f:
+        reader = csv.reader(f, delimiter=delimiter)
+        for line in reader:
+            all_rows.append(line)
+
+    if not all_rows:
+        return {"error": "Empty file", "rows": [], "columns": []}
+
+    header = all_rows[0]
+    data_rows = all_rows[1:rows + 1]
+    total_rows = len(all_rows) - 1
+    total_cols = len(header)
+
+    # Basic stats for numeric columns
+    stats = {}
+    for col_idx, col_name in enumerate(header):
+        values = []
+        for row in all_rows[1:]:
+            if col_idx < len(row):
+                try:
+                    values.append(float(row[col_idx]))
+                except (ValueError, TypeError):
+                    pass
+        if len(values) > 2:
+            stats[col_name] = {
+                "type": "numeric",
+                "min": round(min(values), 6),
+                "max": round(max(values), 6),
+                "mean": round(statistics.mean(values), 6),
+                "std": round(statistics.stdev(values), 6) if len(values) > 1 else 0,
+                "non_null": len(values),
+            }
+        else:
+            stats[col_name] = {"type": "text", "non_null": len(values)}
+
+    return {
+        "filename": ds_file.filename,
+        "role": ds_file.role,
+        "total_rows": total_rows,
+        "total_cols": total_cols,
+        "columns": header,
+        "rows": data_rows,
+        "stats": stats,
+        "delimiter": "tab" if delimiter == "\t" else "comma",
+        "file_size_bytes": file_path.stat().st_size,
+    }
 
 
 # ---------------------------------------------------------------------------

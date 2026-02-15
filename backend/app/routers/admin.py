@@ -1,9 +1,11 @@
-"""Admin endpoints: user management and default configuration."""
+"""Admin endpoints: user management, default configuration, backup/restore."""
 
 import json
+import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -159,3 +161,87 @@ async def set_defaults(body: dict, admin: User = Depends(get_admin_user)):
     """
     _save_defaults(body)
     return body
+
+
+# ---------------------------------------------------------------------------
+# Backup & Restore
+# ---------------------------------------------------------------------------
+
+from ..services import backup as backup_service  # noqa: E402
+
+
+@router.post("/backup")
+async def create_backup(
+    description: str = "",
+    admin: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a full system backup (admin only). Returns backup metadata."""
+    try:
+        result = await backup_service.create_backup(db, description)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backup failed: {e}")
+
+
+@router.get("/backup/list")
+async def list_backups(admin: User = Depends(get_admin_user)):
+    """List all available backups (admin only)."""
+    return backup_service.list_backups()
+
+
+@router.get("/backup/download/{backup_id}")
+async def download_backup(
+    backup_id: str,
+    admin: User = Depends(get_admin_user),
+):
+    """Download a backup archive (admin only)."""
+    path = backup_service.get_backup_path(backup_id)
+    if not path or not path.exists():
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return FileResponse(
+        path,
+        media_type="application/gzip",
+        filename=path.name,
+    )
+
+
+@router.delete("/backup/{backup_id}")
+async def delete_backup_endpoint(
+    backup_id: str,
+    admin: User = Depends(get_admin_user),
+):
+    """Delete a backup archive (admin only)."""
+    if not backup_service.delete_backup(backup_id):
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return {"status": "deleted", "backup_id": backup_id}
+
+
+@router.post("/restore")
+async def restore_backup(
+    file: UploadFile = File(...),
+    mode: str = Query("replace", pattern="^(replace|merge)$"),
+    admin: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload and restore from a backup archive (admin only).
+
+    mode: "replace" (wipe and replace) or "merge" (skip conflicts).
+    """
+    if not file.filename.endswith((".tar.gz", ".tgz")):
+        raise HTTPException(status_code=400, detail="Expected a .tar.gz archive")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".tar.gz") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        result = await backup_service.restore_backup(tmp_path, db, mode=mode)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Restore failed: {e}")
+    finally:
+        tmp_path.unlink(missing_ok=True)
