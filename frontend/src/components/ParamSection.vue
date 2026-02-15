@@ -14,7 +14,7 @@
     <!-- Basic params — always visible -->
     <div class="form-grid">
       <template v-for="p in basicParams" :key="p.key">
-        <div class="form-field" :class="{ 'full-width': p.inputType === 'text' }">
+        <div class="form-field" :class="{ 'full-width': p.inputType === 'text' || p.inputType === 'checkboxGroup' }">
           <label class="field-label">
             <span class="label-text">{{ p.label }}</span>
             <span v-if="p.unit" class="field-unit">({{ p.unit }})</span>
@@ -25,6 +25,23 @@
               <input type="checkbox" v-model="form[p.key]" />
               <span class="check-label">{{ form[p.key] ? 'Enabled' : 'Disabled' }}</span>
             </label>
+          </template>
+          <template v-else-if="p.inputType === 'checkboxGroup'">
+            <div class="checkbox-group">
+              <label
+                v-for="opt in p.options"
+                :key="opt.value"
+                class="checkbox-group-item"
+                :class="{ active: isGroupChecked(form, p.key, opt.value) }"
+              >
+                <input
+                  type="checkbox"
+                  :checked="isGroupChecked(form, p.key, opt.value)"
+                  @change="toggleGroupValue(form, p.key, opt.value)"
+                />
+                <span>{{ opt.label }}</span>
+              </label>
+            </div>
           </template>
           <template v-else-if="p.inputType === 'select'">
             <select v-model="form[p.key]">
@@ -52,7 +69,7 @@
       <summary>Advanced ({{ advancedParams.length }})</summary>
       <div class="form-grid">
         <template v-for="p in advancedParams" :key="p.key">
-          <div class="form-field" :class="{ 'full-width': p.inputType === 'text' }">
+          <div class="form-field" :class="{ 'full-width': p.inputType === 'text' || p.inputType === 'checkboxGroup' }">
             <label class="field-label">
               <span class="label-text">{{ p.label }}</span>
               <span v-if="p.unit" class="field-unit">({{ p.unit }})</span>
@@ -63,6 +80,23 @@
                 <input type="checkbox" v-model="form[p.key]" />
                 <span class="check-label">{{ form[p.key] ? 'Enabled' : 'Disabled' }}</span>
               </label>
+            </template>
+            <template v-else-if="p.inputType === 'checkboxGroup'">
+              <div class="checkbox-group">
+                <label
+                  v-for="opt in p.options"
+                  :key="opt.value"
+                  class="checkbox-group-item"
+                  :class="{ active: isGroupChecked(form, p.key, opt.value) }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="isGroupChecked(form, p.key, opt.value)"
+                    @change="toggleGroupValue(form, p.key, opt.value)"
+                  />
+                  <span>{{ opt.label }}</span>
+                </label>
+              </div>
             </template>
             <template v-else-if="p.inputType === 'select'">
               <select v-model="form[p.key]">
@@ -99,6 +133,23 @@ const props = defineProps({
 
 const basicParams = computed(() => props.params.filter(p => p.level === 'basic'))
 const advancedParams = computed(() => props.params.filter(p => p.level === 'advanced'))
+
+// checkboxGroup helpers — form value is a comma-separated string like "bin,ter,ratio"
+function isGroupChecked(form, key, value) {
+  const current = (form[key] || '').split(',').map(v => v.trim()).filter(Boolean)
+  return current.includes(value)
+}
+
+function toggleGroupValue(form, key, value) {
+  const current = (form[key] || '').split(',').map(v => v.trim()).filter(Boolean)
+  const idx = current.indexOf(value)
+  if (idx >= 0) {
+    current.splice(idx, 1)
+  } else {
+    current.push(value)
+  }
+  form[key] = current.join(',')
+}
 </script>
 
 <style scoped>
@@ -232,6 +283,44 @@ input[type="checkbox"] {
 .check-label {
   font-size: 0.8rem;
   color: var(--text-secondary);
+}
+
+/* Checkbox group (multi-select as toggle pills) */
+.checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.checkbox-group-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.checkbox-group-item input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.checkbox-group-item.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.checkbox-group-item:hover {
+  border-color: var(--accent);
 }
 
 /* Advanced toggle */
