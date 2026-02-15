@@ -35,3 +35,12 @@ build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["app"]
+concurrency = ["greenlet", "thread"]
+omit = ["app/main.py", "app/services/worker.py"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if __name__"]
+show_missing = true
