@@ -2532,15 +2532,19 @@ class TestErrorRecovery:
     """Tests for error handling and edge cases."""
 
     @pytest.mark.asyncio
-    async def test_export_pending_job_returns_400(self, auth_client):
+    async def test_export_pending_job_returns_400(self, auth_client, db_session):
         """Exporting results of a non-completed job should fail."""
-        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
-        # Create a job but don't mark it as completed
-        job_id = await _run_mock_analysis(auth_client, pid, x_fid, y_fid)
+        from app.models.db_models import Job
 
-        # Try to export — job is pending/running, not completed
+        pid, x_fid, y_fid = await _create_project_with_datasets(auth_client)
+        # Create a pending job directly in DB (no background task)
+        job = Job(project_id=pid, user_id="test", status="pending", config={})
+        db_session.add(job)
+        await db_session.commit()
+
+        # Try to export — job is pending, not completed
         resp = await auth_client.get(
-            f"/api/export/{pid}/jobs/{job_id}/csv",
+            f"/api/export/{pid}/jobs/{job.id}/csv",
             params={"section": "best_model"},
         )
         assert resp.status_code == 400
