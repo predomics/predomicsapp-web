@@ -15,6 +15,8 @@ PredomicsApp provides an intuitive interface for running genetic-algorithm-based
 - **Multiple model languages** — Binary, ternary, ratio, and power-of-2 encodings
 - **Batch parameter sweeps** — Launch up to 50 jobs with cartesian product of parameter grids
 - **Interactive results** — AUC evolution, model coefficients, radar charts, feature prevalence, and population analysis
+- **SHAP explanations** — Permutation-based feature importance with waterfall and bar charts for model interpretability
+- **Meta-analysis** — Cross-cohort comparison of multiple jobs with forest plots and heterogeneity statistics
 - **Co-presence analysis** — Pairwise feature co-occurrence with hypergeometric significance test, heatmap, and network visualization
 - **Comparative view** — Side-by-side job comparison with metrics and configuration diff
 - **MSP annotations** — Automatic taxonomic and functional annotations from [biobanks.gmt.bio](https://biobanks.gmt.bio)
@@ -43,6 +45,7 @@ PredomicsApp provides an intuitive interface for running genetic-algorithm-based
 - **Webhook notifications** — HTTP POST callbacks with HMAC-SHA256 signing
 - **Rate limiting** — Per-user and per-IP limits via slowapi
 - **Dark theme** — Full dark mode with consistent Plotly chart theming
+- **Internationalization (i18n)** — Full English and French translations with locale switcher (vue-i18n)
 
 ## Screenshots
 
@@ -60,6 +63,8 @@ PredomicsApp provides an intuitive interface for running genetic-algorithm-based
 | **Co-presence — Network** | <img src="docs/screenshots/10_copresence_network.png" width="400"> |
 | **Results — Comparative** | <img src="docs/screenshots/11_comparative.png" width="400"> |
 | **Public Share** | <img src="docs/screenshots/13_public_share.png" width="400"> |
+| **Meta-Analysis** | <img src="docs/screenshots/14_meta_analysis.png" width="400"> |
+| **SHAP Explanations** | <img src="docs/screenshots/15_shap.png" width="400"> |
 
 ## Architecture
 
@@ -184,6 +189,7 @@ predomicsapp-web/
 │   │   │   ├── DataTab.vue        # Data upload & exploration
 │   │   │   ├── ParametersTab.vue  # Algorithm configuration
 │   │   │   ├── ResultsTab.vue     # Results visualization (5 sub-tabs)
+│   │   │   ├── MetaAnalysisView.vue # Cross-cohort meta-analysis
 │   │   │   ├── DatasetLibrary.vue # Shared dataset management
 │   │   │   ├── PublicShareView.vue # Public read-only results page
 │   │   │   ├── AdminView.vue      # Admin panel
@@ -191,6 +197,9 @@ predomicsapp-web/
 │   │   ├── components/            # Reusable UI components
 │   │   ├── stores/                # Pinia state management
 │   │   ├── composables/           # Vue composables (chart theme, toast)
+│   │   ├── i18n/                  # Internationalization (vue-i18n)
+│   │   │   ├── index.js           # i18n instance & locale config
+│   │   │   └── locales/           # EN + FR translation files
 │   │   ├── data/parameterDefs.js  # Parameter definitions & validation
 │   │   └── __tests__/             # 59 Vitest tests
 │   ├── package.json
@@ -203,7 +212,7 @@ predomicsapp-web/
 ├── docker-compose.yml             # Production compose
 ├── docker-compose.dev.yml         # Development compose
 ├── DEPLOYMENT.md                  # Production deployment guide
-└── ROADMAP.md                     # Feature roadmap (34 items, 32 done)
+└── ROADMAP.md                     # Feature roadmap (37 items, 37 done)
 ```
 
 ## API Endpoints
@@ -282,7 +291,7 @@ The Results tab provides five analytical sub-tabs:
 Key metrics (AUC, features, time), AUC evolution over generations (train vs test), model complexity tracking, and fit-vs-AUC convergence plots.
 
 ### Best Model
-Detailed metrics table, radar chart (accuracy, sensitivity, specificity, AUC), model coefficients with horizontal bar chart (colored by sign), waterfall contribution chart, and per-sample contribution heatmap. Includes **Validate on New Data** (upload external cohort), **Prediction API** endpoint with curl example, and **PDF report** download.
+Detailed metrics table, radar chart (accuracy, sensitivity, specificity, AUC), model coefficients with horizontal bar chart (colored by sign), waterfall contribution chart, and per-sample contribution heatmap. **SHAP explanations** provide permutation-based feature importance with waterfall and bar visualizations. Includes **Validate on New Data** (upload external cohort), **Prediction API** endpoint with curl example, and **PDF report** download.
 
 ### Population
 Population-level analysis with composition by language and data type, AUC distribution, feature frequency across the population, and optional FBM (Family of Best Models) filtering.
@@ -297,6 +306,10 @@ Feature co-occurrence analysis across the model population:
 
 ### Comparative
 Side-by-side comparison of multiple jobs: metrics table with best-value highlighting, configuration diff showing only differing parameters.
+
+## Meta-Analysis
+
+Dedicated page (`/meta-analysis`) for cross-cohort comparison of analysis jobs from different projects. Select multiple completed jobs, view a unified metrics table with forest-plot-style visualization, and assess heterogeneity across cohorts with I² statistics.
 
 ## Testing
 
@@ -324,7 +337,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for production deployment instructions includ
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Vue 3, Pinia, Vue Router, Plotly.js, Vite |
+| Frontend | Vue 3, Pinia, Vue Router, Plotly.js, vue-i18n, Vite |
 | Backend | FastAPI, SQLAlchemy (async), Pydantic |
 | ML Engine | gpredomicspy (Rust + Python) |
 | Database | PostgreSQL / SQLite |
