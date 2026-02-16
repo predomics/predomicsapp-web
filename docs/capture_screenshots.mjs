@@ -38,13 +38,13 @@ async function main() {
   await page.waitForTimeout(2000);
   await dismissOverlays(page);
   await page.screenshot({ path: `${OUT}/01_landing.png` });
-  console.log('1/11 Landing page ✓');
+  console.log('1/14 Landing page ✓');
 
   // ── 2. Login page ──
   await page.goto(`${BASE}/login`);
   await page.waitForTimeout(1000);
   await page.screenshot({ path: `${OUT}/02_login.png` });
-  console.log('2/11 Login page ✓');
+  console.log('2/14 Login page ✓');
 
   // ── Authenticate via API and inject token into localStorage ──
   await page.evaluate(async (creds) => {
@@ -59,28 +59,35 @@ async function main() {
   }, CREDS);
   console.log('   Authenticated (token injected)');
 
-  // ── 3. Projects page ──
+  // ── 3. Dashboard ──
+  await page.goto(`${BASE}/dashboard`);
+  await page.waitForTimeout(3000);
+  await dismissOverlays(page);
+  await page.screenshot({ path: `${OUT}/12_dashboard.png` });
+  console.log('3/14 Dashboard ✓');
+
+  // ── 4. Projects page ──
   await page.goto(`${BASE}/projects`);
   await page.waitForTimeout(3000);
   await dismissOverlays(page);
   await page.screenshot({ path: `${OUT}/03_projects.png` });
-  console.log('3/11 Projects list ✓');
+  console.log('4/14 Projects list ✓');
 
-  // ── 4. Project Data & Run tab ──
+  // ── 5. Project Data & Run tab ──
   await page.goto(`${BASE}/project/${PROJECT_ID}/data`);
   await page.waitForTimeout(4000);
   await dismissOverlays(page);
   await page.screenshot({ path: `${OUT}/04_project_data.png` });
-  console.log('4/11 Project data tab ✓');
+  console.log('5/14 Project data tab ✓');
 
-  // ── 5. Parameters tab ──
+  // ── 6. Parameters tab ──
   await page.goto(`${BASE}/project/${PROJECT_ID}/parameters`);
   await page.waitForTimeout(3000);
   await dismissOverlays(page);
   await page.screenshot({ path: `${OUT}/05_parameters.png` });
-  console.log('5/11 Parameters tab ✓');
+  console.log('6/14 Parameters tab ✓');
 
-  // ── 6. Results — Summary ──
+  // ── 7. Results — Summary ──
   await page.goto(`${BASE}/project/${PROJECT_ID}/results/${JOB_ID}`);
   await page.waitForTimeout(6000);
   await dismissOverlays(page);
@@ -92,7 +99,7 @@ async function main() {
   });
   await page.waitForTimeout(1000);
   await page.screenshot({ path: `${OUT}/06_results_summary.png` });
-  console.log('6/11 Results summary ✓');
+  console.log('7/14 Results summary ✓');
 
   // Helper: click a sub-tab and scroll to content area
   async function clickSubTab(label) {
@@ -112,8 +119,8 @@ async function main() {
     await page.waitForTimeout(4000);
     await page.evaluate(() => window.scrollBy(0, -60));
     await page.screenshot({ path: `${OUT}/07_best_model.png` });
-    console.log('7/11 Best Model ✓');
-  } catch { console.log('7/11 Best Model — SKIPPED (no button)'); }
+    console.log('8/14 Best Model ✓');
+  } catch { console.log('8/14 Best Model — SKIPPED (no button)'); }
 
   // ── 8. Population sub-tab ──
   try {
@@ -121,8 +128,8 @@ async function main() {
     await page.waitForTimeout(4000);
     await page.evaluate(() => window.scrollBy(0, -60));
     await page.screenshot({ path: `${OUT}/08_population.png` });
-    console.log('8/11 Population ✓');
-  } catch { console.log('8/11 Population — SKIPPED'); }
+    console.log('9/14 Population ✓');
+  } catch { console.log('9/14 Population — SKIPPED'); }
 
   // ── 9. Co-presence sub-tab ──
   try {
@@ -130,14 +137,14 @@ async function main() {
     await page.waitForTimeout(6000);
     await page.evaluate(() => window.scrollBy(0, -60));
     await page.screenshot({ path: `${OUT}/09_copresence.png` });
-    console.log('9/11 Co-presence ✓');
+    console.log('10/14 Co-presence ✓');
 
     // Scroll to see heatmap + network
     await page.evaluate(() => window.scrollBy(0, 900));
     await page.waitForTimeout(3000);
     await page.screenshot({ path: `${OUT}/10_copresence_network.png` });
-    console.log('10/11 Co-presence network ✓');
-  } catch (e) { console.log('9-10/11 Co-presence — SKIPPED:', e.message); }
+    console.log('11/14 Co-presence network ✓');
+  } catch (e) { console.log('10-11/14 Co-presence — SKIPPED:', e.message); }
 
   // ── 11. Comparative sub-tab ──
   try {
@@ -145,8 +152,53 @@ async function main() {
     await page.waitForTimeout(4000);
     await page.evaluate(() => window.scrollBy(0, -60));
     await page.screenshot({ path: `${OUT}/11_comparative.png` });
-    console.log('11/11 Comparative ✓');
-  } catch { console.log('11/11 Comparative — SKIPPED'); }
+    console.log('12/14 Comparative ✓');
+  } catch { console.log('12/14 Comparative — SKIPPED'); }
+
+  // ── 13. Create a public share link and capture the public view ──
+  try {
+    // Create a public link via API
+    const token = await page.evaluate(async (pid) => {
+      const authToken = localStorage.getItem('token');
+      const resp = await fetch(`/api/projects/${pid}/public`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ expires_in_days: null }),
+      });
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      return data.token;
+    }, PROJECT_ID);
+
+    if (token) {
+      // Open public share page in a new context (unauthenticated)
+      const pubCtx = await browser.newContext({
+        viewport: { width: 1440, height: 900 },
+        colorScheme: 'dark',
+      });
+      const pubPage = await pubCtx.newPage();
+      await pubPage.goto(`${BASE}/public/${token}`);
+      await pubPage.waitForTimeout(5000);
+      await pubPage.screenshot({ path: `${OUT}/13_public_share.png` });
+      await pubCtx.close();
+      console.log('13/14 Public share ✓');
+    } else {
+      console.log('13/14 Public share — SKIPPED (failed to create link)');
+    }
+  } catch (e) { console.log('13/14 Public share — SKIPPED:', e.message); }
+
+  // ── 14. Landing page (scroll to show capabilities + tech stack) ──
+  try {
+    await page.goto(BASE);
+    await page.waitForTimeout(2000);
+    await page.evaluate(() => window.scrollBy(0, 800));
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: `${OUT}/14_landing_features.png` });
+    console.log('14/14 Landing features ✓');
+  } catch { console.log('14/14 Landing features — SKIPPED'); }
 
   await browser.close();
   console.log(`\nDone! Screenshots saved to ${OUT}/`);
