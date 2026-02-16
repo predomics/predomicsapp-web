@@ -35,7 +35,7 @@ async def create_public_link(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a public share link (project owner only)."""
-    project = await get_project_with_access(project_id, user, db, require_role="editor")
+    project, role = await get_project_with_access(project_id, user, db, require_role="editor")
     if project.user_id != user.id:
         raise HTTPException(status_code=403, detail="Only the project owner can create public links")
 
@@ -70,7 +70,7 @@ async def list_public_links(
     db: AsyncSession = Depends(get_db),
 ):
     """List all public share links for a project (owner only)."""
-    project = await get_project_with_access(project_id, user, db, require_role="editor")
+    project, role = await get_project_with_access(project_id, user, db, require_role="editor")
     if project.user_id != user.id:
         raise HTTPException(status_code=403, detail="Only the project owner can view public links")
 
@@ -101,7 +101,7 @@ async def revoke_public_link(
     db: AsyncSession = Depends(get_db),
 ):
     """Revoke a public share link (owner only)."""
-    project = await get_project_with_access(project_id, user, db, require_role="editor")
+    project, role = await get_project_with_access(project_id, user, db, require_role="editor")
     if project.user_id != user.id:
         raise HTTPException(status_code=403, detail="Only the project owner can revoke links")
 
