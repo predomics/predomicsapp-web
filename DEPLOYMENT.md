@@ -16,56 +16,42 @@
 
 ## Quick Start (Docker Compose)
 
-The simplest way to deploy PredomicsApp is with the included `docker-compose.yml`.
+### Development
 
 ```bash
-# Clone the repository
-git clone <repo-url> && cd predomics_suite
-
-# Create a .env file with production settings
-cat > predomicsapp-web/.env <<EOF
-PREDOMICS_SECRET_KEY=$(openssl rand -hex 32)
-PREDOMICS_DATABASE_URL=postgresql+asyncpg://predomics:STRONG_PASSWORD@db:5432/predomics
-POSTGRES_PASSWORD=STRONG_PASSWORD
-EOF
-
-# Build and start
-cd predomicsapp-web
+git clone <repo-url> && cd predomics_suite/predomicsapp-web
 docker compose up -d --build
 ```
 
-The application will be available on port **8001** (configurable via `docker-compose.yml`).
+The application will be available on port **8001**.
 
-### Production docker-compose.yml overrides
+### Production
 
-Create a `docker-compose.prod.yml` to override development defaults:
-
-```yaml
-services:
-  db:
-    environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - /opt/predomics/pgdata:/var/lib/postgresql/data
-    restart: always
-
-  app:
-    ports:
-      - "127.0.0.1:8001:8000"   # bind to localhost only (NGINX will proxy)
-    environment:
-      - PREDOMICS_SECRET_KEY=${PREDOMICS_SECRET_KEY}
-      - PREDOMICS_DATABASE_URL=${PREDOMICS_DATABASE_URL}
-      - PREDOMICS_CORS_ORIGINS=["https://your-domain.com"]
-    volumes:
-      - /opt/predomics/data:/app/data
-    restart: always
-```
-
-Launch with:
+A full production stack is provided with NGINX reverse proxy, Let's Encrypt SSL, resource limits, log rotation, and automated daily backups.
 
 ```bash
+cd predomicsapp-web
+
+# 1. Configure production environment
+cp .env.example .env
+# Edit .env — set DOMAIN, CERTBOT_EMAIL, POSTGRES_PASSWORD, PREDOMICS_SECRET_KEY
+
+# 2. Obtain SSL certificate (first time only)
+./scripts/ssl-init.sh
+
+# 3. Start the production stack
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
+
+The production override (`docker-compose.prod.yml`) adds:
+- **NGINX** reverse proxy with SSL termination (ports 80/443)
+- **Certbot** for automatic Let's Encrypt certificate renewal (every 12h)
+- **Resource limits** on all services (app: 4G/2CPU, db: 1G/1CPU)
+- **Log rotation** (json-file driver with max-size/max-file)
+- **Backup service** — daily PostgreSQL dump + data volume archive with configurable retention
+- No exposed ports except 80/443 (app and db are internal only)
+
+Key files: [`.env.example`](.env.example) | [`docker-compose.prod.yml`](docker-compose.prod.yml) | [`nginx/nginx.conf`](nginx/nginx.conf) | [`scripts/`](scripts/)
 
 ---
 
@@ -90,61 +76,20 @@ All settings use the `PREDOMICS_` prefix (via pydantic-settings).
 
 ## NGINX Reverse Proxy
 
-Place this in `/etc/nginx/sites-available/predomics`:
+The production stack includes an NGINX reverse proxy configured in [`nginx/nginx.conf`](nginx/nginx.conf). It provides:
 
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
+- HTTP → HTTPS redirect
+- SSL/TLS with Let's Encrypt certificates
+- Security headers (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy)
+- WebSocket upgrade support (for job progress streaming)
+- Static asset caching (7 days for `/assets/`)
+- Large upload support (`client_max_body_size 500M`)
+- Long proxy timeouts (600s for analysis jobs)
+- Silent `/health` endpoint (no access logging)
 
-    # Redirect HTTP → HTTPS
-    return 301 https://$host$request_uri;
-}
+The config is mounted read-only into the nginx container. To customize, edit `nginx/nginx.conf` directly.
 
-server {
-    listen 443 ssl http2;
-    server_name your-domain.com;
-
-    ssl_certificate     /etc/letsencrypt/live/your-domain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
-
-    # Security headers
-    add_header X-Frame-Options DENY;
-    add_header X-Content-Type-Options nosniff;
-    add_header X-XSS-Protection "1; mode=block";
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-
-    # Max upload size (for dataset files)
-    client_max_body_size 500M;
-
-    location / {
-        proxy_pass http://127.0.0.1:8001;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # WebSocket support (if needed in future)
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-
-        # Timeouts for long-running analysis jobs
-        proxy_read_timeout 600s;
-        proxy_send_timeout 600s;
-    }
-
-    # Cache static assets
-    location /assets/ {
-        proxy_pass http://127.0.0.1:8001;
-        proxy_cache_valid 200 7d;
-        expires 7d;
-        add_header Cache-Control "public, immutable";
-    }
-}
-```
-
-Enable and reload:
+**Standalone NGINX** (without Docker): Copy the config to `/etc/nginx/sites-available/predomics`, update `proxy_pass` to `http://127.0.0.1:8001`, then:
 
 ```bash
 ln -s /etc/nginx/sites-available/predomics /etc/nginx/sites-enabled/
@@ -155,14 +100,25 @@ nginx -t && systemctl reload nginx
 
 ## SSL/TLS with Let's Encrypt
 
+### With the production Docker stack (recommended)
+
+SSL is handled automatically by the `certbot` service in `docker-compose.prod.yml`:
+
 ```bash
-# Install certbot
+# First-time setup — obtains initial certificate
+./scripts/ssl-init.sh
+
+# Use --staging for testing (non-trusted certs, no rate limits)
+./scripts/ssl-init.sh --staging
+```
+
+The certbot container automatically renews certificates every 12 hours. Certificates are stored in `./certbot/conf/`.
+
+### Standalone (without Docker)
+
+```bash
 apt install certbot python3-certbot-nginx
-
-# Obtain certificate
 certbot --nginx -d your-domain.com
-
-# Auto-renewal (certbot adds a systemd timer by default)
 certbot renew --dry-run
 ```
 
@@ -205,188 +161,104 @@ Current migrations: v2 (dataset library) → v3 (composite datasets) → v4 (adm
 
 ## Backup & Restore
 
-### Database backup
+### Automated backups (production stack)
+
+The production `docker-compose.prod.yml` includes a dedicated backup service that runs daily at 02:00 UTC. It creates:
+- **PostgreSQL dump** (`backups/db_YYYYMMDD_HHMMSS.dump`) — custom format for efficient restore
+- **Data volume archive** (`backups/data_YYYYMMDD_HHMMSS.tar.gz`) — uploads, projects, datasets
+
+Configure retention via `BACKUP_RETENTION_DAYS` in `.env` (default: 7 days).
+
+### Manual backup and restore scripts
 
 ```bash
-# Dump the database from the Docker container
-docker exec predomics-db pg_dump -U predomics predomics > backup_$(date +%Y%m%d).sql
+# Manual backup (DB + data volume, with retention cleanup)
+./scripts/backup.sh
 
-# Or from an external host
-pg_dump -h localhost -p 5433 -U predomics predomics > backup_$(date +%Y%m%d).sql
+# List available backups
+ls backups/
+
+# Restore from a specific timestamp (both DB + data)
+./scripts/restore.sh 20260215_020000
+
+# Restore database only
+./scripts/restore.sh 20260215_020000 --db
+
+# Restore data volume only
+./scripts/restore.sh 20260215_020000 --data
 ```
 
-### Database restore
+### Quick manual commands
 
 ```bash
-# Stop the app first
+# Database dump (development)
+docker exec predomics-db pg_dump -U predomics predomics > backup.sql
+
+# Database restore (development)
 docker compose stop app
-
-# Restore
-docker exec -i predomics-db psql -U predomics predomics < backup_20260215.sql
-
-# Restart
+docker exec -i predomics-db psql -U predomics predomics < backup.sql
 docker compose start app
 ```
-
-### File data backup
-
-Back up the data volume which contains uploads, project results, and datasets:
-
-```bash
-# If using named volume
-docker run --rm -v predomics_app-data:/data -v $(pwd):/backup alpine \
-  tar czf /backup/predomics-data-$(date +%Y%m%d).tar.gz -C /data .
-
-# If using bind mount
-tar czf predomics-data-$(date +%Y%m%d).tar.gz /opt/predomics/data/
-```
-
-### Automated backup script
-
-```bash
-#!/bin/bash
-# /opt/predomics/backup.sh — run via cron daily
-BACKUP_DIR=/opt/predomics/backups
-mkdir -p "$BACKUP_DIR"
-DATE=$(date +%Y%m%d)
-
-# Database
-docker exec predomics-db pg_dump -U predomics predomics | gzip > "$BACKUP_DIR/db_$DATE.sql.gz"
-
-# Files
-docker run --rm -v predomics_app-data:/data -v "$BACKUP_DIR":/backup alpine \
-  tar czf "/backup/data_$DATE.tar.gz" -C /data .
-
-# Keep last 30 days
-find "$BACKUP_DIR" -name "*.gz" -mtime +30 -delete
-```
-
-Add to crontab: `0 2 * * * /opt/predomics/backup.sh`
 
 ---
 
 ## Kubernetes (Helm)
 
-A basic Kubernetes deployment consists of:
+A Helm chart is provided in [`helm/predomicsapp/`](helm/predomicsapp/) for Kubernetes deployment.
 
-### Deployment manifest (predomics-deployment.yaml)
+### Quick start
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: predomics-web
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: predomics-web
-  template:
-    metadata:
-      labels:
-        app: predomics-web
-    spec:
-      containers:
-        - name: app
-          image: your-registry/predomics-web:latest
-          ports:
-            - containerPort: 8000
-          env:
-            - name: PREDOMICS_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: predomics-secrets
-                  key: secret-key
-            - name: PREDOMICS_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: predomics-secrets
-                  key: database-url
-          volumeMounts:
-            - name: data
-              mountPath: /app/data
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 15
-            periodSeconds: 30
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          resources:
-            requests:
-              memory: "512Mi"
-              cpu: "500m"
-            limits:
-              memory: "2Gi"
-              cpu: "2000m"
-      volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: predomics-data
+```bash
+# Install with default values
+helm install predomics ./helm/predomicsapp/
 
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: predomics-web
-spec:
-  selector:
-    app: predomics-web
-  ports:
-    - port: 80
-      targetPort: 8000
-  type: ClusterIP
+# Install with custom values
+helm install predomics ./helm/predomicsapp/ \
+  --set ingress.enabled=true \
+  --set ingress.host=predomics.example.com \
+  --set ingress.tls.enabled=true \
+  --set ingress.annotations."cert-manager\.io/cluster-issuer"=letsencrypt-prod
 
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: predomics-data
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 20Gi
+# Upgrade
+helm upgrade predomics ./helm/predomicsapp/ -f my-values.yaml
+```
+
+### Key values
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `image.repository` | `ghcr.io/predomics/predomicsapp-web` | Container image |
+| `image.tag` | `latest` | Image tag |
+| `replicaCount` | `1` | Number of replicas |
+| `resources.limits.memory` | `4Gi` | Memory limit |
+| `resources.limits.cpu` | `2` | CPU limit |
+| `ingress.enabled` | `false` | Enable Ingress |
+| `ingress.host` | `predomics.example.com` | Ingress hostname |
+| `persistence.size` | `20Gi` | Data volume size |
+| `postgresql.enabled` | `true` | Use bundled PostgreSQL |
+| `externalDatabase.url` | `""` | External database URL |
+
+See [`helm/predomicsapp/values.yaml`](helm/predomicsapp/values.yaml) for all configurable values.
+
+### Using an external database
+
+```bash
+helm install predomics ./helm/predomicsapp/ \
+  --set postgresql.enabled=false \
+  --set externalDatabase.url="postgresql+asyncpg://user:pass@host:5432/predomics"
 ```
 
 ### Secrets
 
+The chart auto-generates secrets if `secrets.existingSecret` is not set. For production, create a Kubernetes secret first:
+
 ```bash
 kubectl create secret generic predomics-secrets \
   --from-literal=secret-key=$(openssl rand -hex 32) \
-  --from-literal=database-url="postgresql+asyncpg://user:pass@postgres-svc:5432/predomics"
-```
+  --from-literal=postgres-password="STRONG_PASSWORD"
 
-### Ingress (with cert-manager)
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: predomics-ingress
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-spec:
-  tls:
-    - hosts: [your-domain.com]
-      secretName: predomics-tls
-  rules:
-    - host: your-domain.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: predomics-web
-                port:
-                  number: 80
+helm install predomics ./helm/predomicsapp/ \
+  --set secrets.existingSecret=predomics-secrets
 ```
 
 ---

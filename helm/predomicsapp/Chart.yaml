@@ -1,0 +1,16 @@
+apiVersion: v2
+name: predomicsapp
+description: PredomicsApp — AI-powered biomarker discovery platform
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - predomics
+  - biomarker
+  - metagenomics
+  - machine-learning
+home: https://github.com/predomics/predomicsapp-web
+sources:
+  - https://github.com/predomics/predomicsapp-web
+maintainers:
+  - name: PredomicsApp Team

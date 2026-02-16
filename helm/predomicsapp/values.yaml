@@ -1,0 +1,131 @@
+# PredomicsApp — Helm Chart Default Values
+
+# --------------------------------------------------------------------------
+# Application image
+# --------------------------------------------------------------------------
+image:
+  repository: ghcr.io/predomics/predomicsapp-web
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# --------------------------------------------------------------------------
+# Deployment
+# --------------------------------------------------------------------------
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+
+# --------------------------------------------------------------------------
+# Service
+# --------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+# --------------------------------------------------------------------------
+# Ingress (optional — enable for HTTPS access)
+# --------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  host: predomics.example.com
+  tls:
+    enabled: false
+    secretName: predomics-tls
+
+# --------------------------------------------------------------------------
+# Persistence — data volume for uploads, projects, datasets
+# --------------------------------------------------------------------------
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 20Gi
+
+# --------------------------------------------------------------------------
+# PostgreSQL (bundled via sub-chart or external)
+# --------------------------------------------------------------------------
+postgresql:
+  # Set to false to use an external database
+  enabled: true
+  auth:
+    username: predomics
+    database: predomics
+    # existingSecret: ""    # use an existing K8s secret for the password
+  primary:
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    persistence:
+      enabled: true
+      size: 10Gi
+
+# External database (used when postgresql.enabled=false)
+externalDatabase:
+  url: ""
+  # e.g. postgresql+asyncpg://user:pass@host:5432/predomics
+
+# --------------------------------------------------------------------------
+# Application environment
+# --------------------------------------------------------------------------
+env:
+  PREDOMICS_DATA_DIR: /app/data
+  PREDOMICS_UPLOAD_DIR: /app/data/uploads
+  PREDOMICS_PROJECT_DIR: /app/data/projects
+  PREDOMICS_SAMPLE_DIR: /app/data/qin2014_cirrhosis
+  PREDOMICS_DEFAULT_THREAD_NUMBER: "4"
+
+# --------------------------------------------------------------------------
+# Secrets (will be created as a Kubernetes Secret)
+# --------------------------------------------------------------------------
+secrets:
+  # Generate with: openssl rand -hex 32
+  secretKey: ""
+  # Only used when postgresql.enabled=true
+  postgresPassword: ""
+  # Provide existingSecret to use a pre-created K8s secret instead
+  existingSecret: ""
+
+# --------------------------------------------------------------------------
+# Health checks
+# --------------------------------------------------------------------------
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 15
+  periodSeconds: 30
+  timeoutSeconds: 5
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+
+# --------------------------------------------------------------------------
+# Pod settings
+# --------------------------------------------------------------------------
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podSecurityContext: {}
+securityContext: {}
