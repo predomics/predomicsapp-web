@@ -38,13 +38,13 @@ async function main() {
   await page.waitForTimeout(2000);
   await dismissOverlays(page);
   await page.screenshot({ path: `${OUT}/01_landing.png` });
-  console.log('1/14 Landing page ✓');
+  console.log('1/17 Landing page ✓');
 
   // ── 2. Login page ──
   await page.goto(`${BASE}/login`);
   await page.waitForTimeout(1000);
   await page.screenshot({ path: `${OUT}/02_login.png` });
-  console.log('2/14 Login page ✓');
+  console.log('2/17 Login page ✓');
 
   // ── Authenticate via API and inject token into localStorage ──
   await page.evaluate(async (creds) => {
@@ -64,28 +64,28 @@ async function main() {
   await page.waitForTimeout(3000);
   await dismissOverlays(page);
   await page.screenshot({ path: `${OUT}/12_dashboard.png` });
-  console.log('3/14 Dashboard ✓');
+  console.log('3/17 Dashboard ✓');
 
   // ── 4. Projects page ──
   await page.goto(`${BASE}/projects`);
   await page.waitForTimeout(3000);
   await dismissOverlays(page);
   await page.screenshot({ path: `${OUT}/03_projects.png` });
-  console.log('4/14 Projects list ✓');
+  console.log('4/17 Projects list ✓');
 
   // ── 5. Project Data & Run tab ──
   await page.goto(`${BASE}/project/${PROJECT_ID}/data`);
   await page.waitForTimeout(4000);
   await dismissOverlays(page);
   await page.screenshot({ path: `${OUT}/04_project_data.png` });
-  console.log('5/14 Project data tab ✓');
+  console.log('5/17 Project data tab ✓');
 
   // ── 6. Parameters tab ──
   await page.goto(`${BASE}/project/${PROJECT_ID}/parameters`);
   await page.waitForTimeout(3000);
   await dismissOverlays(page);
   await page.screenshot({ path: `${OUT}/05_parameters.png` });
-  console.log('6/14 Parameters tab ✓');
+  console.log('6/17 Parameters tab ✓');
 
   // ── 7. Results — Summary ──
   await page.goto(`${BASE}/project/${PROJECT_ID}/results/${JOB_ID}`);
@@ -99,7 +99,7 @@ async function main() {
   });
   await page.waitForTimeout(1000);
   await page.screenshot({ path: `${OUT}/06_results_summary.png` });
-  console.log('7/14 Results summary ✓');
+  console.log('7/17 Results summary ✓');
 
   // Helper: click a sub-tab and scroll to content area
   async function clickSubTab(label) {
@@ -119,8 +119,8 @@ async function main() {
     await page.waitForTimeout(4000);
     await page.evaluate(() => window.scrollBy(0, -60));
     await page.screenshot({ path: `${OUT}/07_best_model.png` });
-    console.log('8/14 Best Model ✓');
-  } catch { console.log('8/14 Best Model — SKIPPED (no button)'); }
+    console.log('8/17 Best Model ✓');
+  } catch { console.log('8/17 Best Model — SKIPPED (no button)'); }
 
   // ── 8. Population sub-tab ──
   try {
@@ -128,8 +128,8 @@ async function main() {
     await page.waitForTimeout(4000);
     await page.evaluate(() => window.scrollBy(0, -60));
     await page.screenshot({ path: `${OUT}/08_population.png` });
-    console.log('9/14 Population ✓');
-  } catch { console.log('9/14 Population — SKIPPED'); }
+    console.log('9/17 Population ✓');
+  } catch { console.log('9/17 Population — SKIPPED'); }
 
   // ── 9. Co-presence sub-tab ──
   try {
@@ -137,14 +137,14 @@ async function main() {
     await page.waitForTimeout(6000);
     await page.evaluate(() => window.scrollBy(0, -60));
     await page.screenshot({ path: `${OUT}/09_copresence.png` });
-    console.log('10/14 Co-presence ✓');
+    console.log('10/17 Co-presence ✓');
 
     // Scroll to see heatmap + network
     await page.evaluate(() => window.scrollBy(0, 900));
     await page.waitForTimeout(3000);
     await page.screenshot({ path: `${OUT}/10_copresence_network.png` });
-    console.log('11/14 Co-presence network ✓');
-  } catch (e) { console.log('10-11/14 Co-presence — SKIPPED:', e.message); }
+    console.log('11/17 Co-presence network ✓');
+  } catch (e) { console.log('10-11/17 Co-presence — SKIPPED:', e.message); }
 
   // ── 11. Comparative sub-tab ──
   try {
@@ -152,8 +152,8 @@ async function main() {
     await page.waitForTimeout(4000);
     await page.evaluate(() => window.scrollBy(0, -60));
     await page.screenshot({ path: `${OUT}/11_comparative.png` });
-    console.log('12/14 Comparative ✓');
-  } catch { console.log('12/14 Comparative — SKIPPED'); }
+    console.log('12/17 Comparative ✓');
+  } catch { console.log('12/17 Comparative — SKIPPED'); }
 
   // ── 13. Create a public share link and capture the public view ──
   try {
@@ -184,21 +184,56 @@ async function main() {
       await pubPage.waitForTimeout(5000);
       await pubPage.screenshot({ path: `${OUT}/13_public_share.png` });
       await pubCtx.close();
-      console.log('13/14 Public share ✓');
+      console.log('13/17 Public share ✓');
     } else {
-      console.log('13/14 Public share — SKIPPED (failed to create link)');
+      console.log('13/17 Public share — SKIPPED (failed to create link)');
     }
-  } catch (e) { console.log('13/14 Public share — SKIPPED:', e.message); }
+  } catch (e) { console.log('13/17 Public share — SKIPPED:', e.message); }
 
-  // ── 14. Landing page (scroll to show capabilities + tech stack) ──
+  // ── 14. Meta-Analysis page ──
   try {
-    await page.goto(BASE);
-    await page.waitForTimeout(2000);
-    await page.evaluate(() => window.scrollBy(0, 800));
-    await page.waitForTimeout(500);
-    await page.screenshot({ path: `${OUT}/14_landing_features.png` });
-    console.log('14/14 Landing features ✓');
-  } catch { console.log('14/14 Landing features — SKIPPED'); }
+    await page.goto(`${BASE}/meta-analysis`);
+    await page.waitForTimeout(4000);
+    await dismissOverlays(page);
+    await page.screenshot({ path: `${OUT}/14_meta_analysis.png` });
+    console.log('14/17 Meta-Analysis ✓');
+  } catch { console.log('14/17 Meta-Analysis — SKIPPED'); }
+
+  // ── 15. SHAP explanations (Best Model sub-tab) ──
+  try {
+    await page.goto(`${BASE}/project/${PROJECT_ID}/results/${JOB_ID}`);
+    await page.waitForTimeout(4000);
+    await clickSubTab('Best Model');
+    await page.waitForTimeout(3000);
+    // Scroll down to SHAP section
+    await page.evaluate(() => {
+      const shapEl = document.querySelector('[class*="shap"], h3:has-text("SHAP"), h4:has-text("SHAP")');
+      if (shapEl) shapEl.scrollIntoView({ block: 'start' });
+      else window.scrollBy(0, 1200);
+    });
+    await page.waitForTimeout(3000);
+    await page.screenshot({ path: `${OUT}/15_shap.png` });
+    console.log('15/17 SHAP explanations ✓');
+  } catch { console.log('15/17 SHAP — SKIPPED'); }
+
+  // ── 16. French UI (switch locale and capture dashboard) ──
+  try {
+    await page.evaluate(() => localStorage.setItem('locale', 'fr'));
+    await page.goto(`${BASE}/dashboard`);
+    await page.waitForTimeout(3000);
+    await dismissOverlays(page);
+    await page.screenshot({ path: `${OUT}/16_french_dashboard.png` });
+    console.log('16/17 French dashboard ✓');
+
+    await page.goto(`${BASE}/projects`);
+    await page.waitForTimeout(3000);
+    await dismissOverlays(page);
+    await page.screenshot({ path: `${OUT}/17_french_projects.png` });
+    console.log('17/17 French projects ✓');
+
+    // Reset locale back to English
+    await page.evaluate(() => localStorage.setItem('locale', 'en'));
+  } catch { console.log('16-17/17 French UI — SKIPPED'); }
 
   await browser.close();
   console.log(`\nDone! Screenshots saved to ${OUT}/`);
