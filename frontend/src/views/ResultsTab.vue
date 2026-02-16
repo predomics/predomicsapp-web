@@ -3,24 +3,24 @@
     <!-- Job management table -->
     <div class="job-table-section" v-if="jobs.length > 0">
       <div class="job-table-header">
-        <h3>Jobs</h3>
-        <span class="job-count">{{ filteredJobs.length }}<template v-if="jobSearch"> / {{ jobs.length }}</template> job{{ jobs.length !== 1 ? 's' : '' }}</span>
+        <h3>{{ $t('results.jobs') }}</h3>
+        <span class="job-count">{{ filteredJobs.length }}<template v-if="jobSearch"> / {{ jobs.length }}</template> {{ $t('results.job', jobs.length) }}</span>
         <input
           type="text"
           v-model="jobSearch"
           class="job-search"
-          placeholder="Search jobs..."
+          :placeholder="$t('results.searchJobs')"
         />
         <button class="btn-sm btn-outline" @click="findDuplicates" :disabled="duplicatesLoading" v-if="jobs.length >= 2">
-          {{ duplicatesLoading ? 'Checking...' : 'Find Duplicates' }}
+          {{ duplicatesLoading ? $t('results.checking') : $t('results.findDuplicates') }}
         </button>
       </div>
       <!-- Duplicate groups panel -->
       <div v-if="duplicateGroups.length > 0" class="duplicates-panel">
         <div class="duplicates-header">
-          <strong>{{ duplicateGroups.length }} duplicate group{{ duplicateGroups.length !== 1 ? 's' : '' }} found</strong>
-          <button class="btn-sm btn-danger" @click="cleanupDuplicates">Delete duplicates (keep best)</button>
-          <button class="btn-sm btn-outline" @click="duplicateGroups = []">Dismiss</button>
+          <strong>{{ $t('results.duplicateGroupsFound', { n: duplicateGroups.length }) }}</strong>
+          <button class="btn-sm btn-danger" @click="cleanupDuplicates">{{ $t('results.deleteDuplicates') }}</button>
+          <button class="btn-sm btn-outline" @click="duplicateGroups = []">{{ $t('results.dismiss') }}</button>
         </div>
         <div v-for="(g, gi) in duplicateGroups" :key="gi" class="dup-group">
           <div class="dup-group-label">{{ g.config_summary }} ({{ g.jobs.length }} jobs)</div>
@@ -28,8 +28,8 @@
             <span class="dup-name">{{ dj.name || dj.job_id.slice(0, 8) }}</span>
             <span class="status-badge" :class="dj.status">{{ dj.status }}</span>
             <span v-if="dj.best_auc != null">AUC {{ dj.best_auc.toFixed(4) }}</span>
-            <span class="dup-tag" v-if="dj.keep">KEEP</span>
-            <span class="dup-tag dup-remove" v-else>REMOVE</span>
+            <span class="dup-tag" v-if="dj.keep">{{ $t('results.keep') }}</span>
+            <span class="dup-tag dup-remove" v-else>{{ $t('results.remove') }}</span>
           </div>
         </div>
       </div>
@@ -37,18 +37,18 @@
         <table class="job-table">
           <thead>
             <tr>
-              <th class="col-name" @click="toggleJobSort('name')">Name <span v-if="jobSortKey === 'name'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
-              <th class="col-status" @click="toggleJobSort('status')">Status <span v-if="jobSortKey === 'status'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
-              <th class="col-auc" @click="toggleJobSort('best_auc')">AUC <span v-if="jobSortKey === 'best_auc'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
-              <th class="col-k" @click="toggleJobSort('best_k')">k <span v-if="jobSortKey === 'best_k'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
-              <th class="col-lang">Language</th>
-              <th class="col-pop">Pop</th>
-              <th class="col-config">Config</th>
-              <th class="col-size" @click="toggleJobSort('disk_size_bytes')">Size <span v-if="jobSortKey === 'disk_size_bytes'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
-              <th class="col-duration" @click="toggleJobSort('duration_seconds')">Duration <span v-if="jobSortKey === 'duration_seconds'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
-              <th class="col-created" @click="toggleJobSort('created_at')">Created <span v-if="jobSortKey === 'created_at'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
-              <th class="col-user">User</th>
-              <th class="col-actions">Actions</th>
+              <th class="col-name" @click="toggleJobSort('name')">{{ $t('results.colName') }} <span v-if="jobSortKey === 'name'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-status" @click="toggleJobSort('status')">{{ $t('results.colStatus') }} <span v-if="jobSortKey === 'status'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-auc" @click="toggleJobSort('best_auc')">{{ $t('results.colAuc') }} <span v-if="jobSortKey === 'best_auc'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-k" @click="toggleJobSort('best_k')">{{ $t('results.colK') }} <span v-if="jobSortKey === 'best_k'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-lang">{{ $t('results.colLanguage') }}</th>
+              <th class="col-pop">{{ $t('results.colPop') }}</th>
+              <th class="col-config">{{ $t('results.colConfig') }}</th>
+              <th class="col-size" @click="toggleJobSort('disk_size_bytes')">{{ $t('results.colSize') }} <span v-if="jobSortKey === 'disk_size_bytes'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-duration" @click="toggleJobSort('duration_seconds')">{{ $t('results.colDuration') }} <span v-if="jobSortKey === 'duration_seconds'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-created" @click="toggleJobSort('created_at')">{{ $t('results.colCreated') }} <span v-if="jobSortKey === 'created_at'">{{ jobSortAsc ? '▲' : '▼' }}</span></th>
+              <th class="col-user">{{ $t('results.colUser') }}</th>
+              <th class="col-actions">{{ $t('results.colActions') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -81,9 +81,9 @@
       </div>
       <!-- Job table pagination -->
       <div class="job-pagination" v-if="filteredJobs.length > jobPageSize">
-        <button @click="jobPage = Math.max(0, jobPage - 1)" :disabled="jobPage === 0">&laquo; Prev</button>
-        <span>{{ jobPage * jobPageSize + 1 }}&ndash;{{ Math.min((jobPage + 1) * jobPageSize, filteredJobs.length) }} of {{ filteredJobs.length }}</span>
-        <button @click="jobPage++" :disabled="(jobPage + 1) * jobPageSize >= filteredJobs.length">Next &raquo;</button>
+        <button @click="jobPage = Math.max(0, jobPage - 1)" :disabled="jobPage === 0">&laquo; {{ $t('results.prev') }}</button>
+        <span>{{ jobPage * jobPageSize + 1 }}&ndash;{{ Math.min((jobPage + 1) * jobPageSize, filteredJobs.length) }} {{ $t('results.of') }} {{ filteredJobs.length }}</span>
+        <button @click="jobPage++" :disabled="(jobPage + 1) * jobPageSize >= filteredJobs.length">{{ $t('results.next') }} &raquo;</button>
       </div>
     </div>
 
@@ -91,30 +91,30 @@
     <div v-if="selectedJobInfo && selectedJobInfo.status === 'failed' && !detail" class="failed-job-panel">
       <div class="failed-header">
         <span class="failed-icon">&#9888;</span>
-        <h3>Job Failed</h3>
+        <h3>{{ $t('results.jobFailed') }}</h3>
         <span class="failed-name" v-if="selectedJobInfo.name">{{ selectedJobInfo.name }}</span>
       </div>
       <div class="failed-details">
         <div class="failed-row" v-if="selectedJobInfo.error_message">
-          <strong>Error:</strong>
+          <strong>{{ $t('results.error') }}</strong>
           <pre class="error-message">{{ selectedJobInfo.error_message }}</pre>
         </div>
         <div class="failed-row" v-if="selectedJobInfo.created_at">
-          <strong>Started:</strong> {{ formatDate(selectedJobInfo.created_at) }}
+          <strong>{{ $t('results.started') }}</strong> {{ formatDate(selectedJobInfo.created_at) }}
         </div>
         <div class="failed-row" v-if="selectedJobInfo.duration_seconds">
-          <strong>Duration:</strong> {{ formatDuration(selectedJobInfo.duration_seconds) }}
+          <strong>{{ $t('results.duration') }}</strong> {{ formatDuration(selectedJobInfo.duration_seconds) }}
         </div>
         <div class="failed-row" v-if="selectedJobInfo.config_summary">
-          <strong>Config:</strong> {{ selectedJobInfo.config_summary }}
+          <strong>{{ $t('results.config') }}</strong> {{ selectedJobInfo.config_summary }}
         </div>
       </div>
       <div v-if="failedJobLog" class="failed-log">
-        <strong>Console output (last 50 lines):</strong>
+        <strong>{{ $t('results.consoleLast50') }}</strong>
         <pre class="log-content">{{ failedJobLog }}</pre>
       </div>
       <div v-else class="failed-log-hint">
-        <button class="btn-sm btn-outline" @click="loadFailedJobLog">Show console log</button>
+        <button class="btn-sm btn-outline" @click="loadFailedJobLog">{{ $t('results.showConsoleLog') }}</button>
       </div>
     </div>
 
@@ -122,36 +122,36 @@
     <div v-else-if="selectedJobInfo && (selectedJobInfo.status === 'pending' || selectedJobInfo.status === 'running') && !detail" class="pending-job-panel">
       <div class="pending-header">
         <span class="pending-icon">&#9203;</span>
-        <h3>Job {{ selectedJobInfo.status === 'running' ? 'Running' : 'Pending' }}</h3>
+        <h3>{{ selectedJobInfo.status === 'running' ? $t('results.jobRunning') : $t('results.jobPending') }}</h3>
         <span class="pending-name" v-if="selectedJobInfo.name">{{ selectedJobInfo.name }}</span>
       </div>
-      <p class="pending-text">Results will appear here once the job completes.</p>
+      <p class="pending-text">{{ $t('results.resultsWillAppear') }}</p>
     </div>
 
     <!-- Sub-tabs -->
     <nav class="sub-tabs" v-if="detail">
-      <button :class="{ active: subTab === 'summary' }" @click="subTab = 'summary'">Summary</button>
-      <button :class="{ active: subTab === 'bestmodel' }" @click="subTab = 'bestmodel'">Best Model</button>
-      <button :class="{ active: subTab === 'population' }" @click="subTab = 'population'">Population</button>
-      <button v-if="juryData" :class="{ active: subTab === 'jury' }" @click="subTab = 'jury'">Jury</button>
-      <button :class="{ active: subTab === 'comparative' }" @click="subTab = 'comparative'">Comparative</button>
-      <button v-if="population.length > 1" :class="{ active: subTab === 'copresence' }" @click="subTab = 'copresence'">Co-presence</button>
+      <button :class="{ active: subTab === 'summary' }" @click="subTab = 'summary'">{{ $t('results.summary') }}</button>
+      <button :class="{ active: subTab === 'bestmodel' }" @click="subTab = 'bestmodel'">{{ $t('results.bestModel') }}</button>
+      <button :class="{ active: subTab === 'population' }" @click="subTab = 'population'">{{ $t('results.population') }}</button>
+      <button v-if="juryData" :class="{ active: subTab === 'jury' }" @click="subTab = 'jury'">{{ $t('results.jury') }}</button>
+      <button :class="{ active: subTab === 'comparative' }" @click="subTab = 'comparative'">{{ $t('results.comparative') }}</button>
+      <button v-if="population.length > 1" :class="{ active: subTab === 'copresence' }" @click="subTab = 'copresence'">{{ $t('results.copresence') }}</button>
       <div class="export-dropdown-wrap" v-if="detail">
         <button class="btn-sm btn-export" @click="exportMenuOpen = !exportMenuOpen">
-          &#8615; Export
+          &#8615; {{ $t('results.export') }}
         </button>
         <div class="export-menu" v-if="exportMenuOpen" @mouseleave="exportMenuOpen = false">
-          <button @click="doExport('report')">HTML Report</button>
-          <button @click="doExport('pdf')">PDF Biomarker Report</button>
-          <button @click="doExport('json')">Full JSON</button>
+          <button @click="doExport('report')">{{ $t('results.htmlReport') }}</button>
+          <button @click="doExport('pdf')">{{ $t('results.pdfReport') }}</button>
+          <button @click="doExport('json')">{{ $t('results.fullJson') }}</button>
           <hr />
-          <button @click="doExport('csv', 'best_model')">CSV: Best Model</button>
-          <button @click="doExport('csv', 'population')">CSV: Population</button>
-          <button @click="doExport('csv', 'generation_tracking')">CSV: Generations</button>
-          <button v-if="juryData" @click="doExport('csv', 'jury_predictions')">CSV: Jury Predictions</button>
+          <button @click="doExport('csv', 'best_model')">{{ $t('results.csvBestModel') }}</button>
+          <button @click="doExport('csv', 'population')">{{ $t('results.csvPopulation') }}</button>
+          <button @click="doExport('csv', 'generation_tracking')">{{ $t('results.csvGenerations') }}</button>
+          <button v-if="juryData" @click="doExport('csv', 'jury_predictions')">{{ $t('results.csvJuryPredictions') }}</button>
           <hr />
-          <button @click="doExport('notebook', 'python')">Python Notebook (.ipynb)</button>
-          <button @click="doExport('notebook', 'r')">R Notebook (.Rmd)</button>
+          <button @click="doExport('notebook', 'python')">{{ $t('results.pythonNotebook') }}</button>
+          <button @click="doExport('notebook', 'r')">{{ $t('results.rNotebook') }}</button>
         </div>
       </div>
     </nav>
@@ -163,44 +163,44 @@
       <div class="summary-grid">
         <div class="stat-card">
           <div class="stat-value">{{ detail.best_auc?.toFixed(4) || '—' }}</div>
-          <div class="stat-label">Best AUC</div>
+          <div class="stat-label">{{ $t('results.bestAuc') }}</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">{{ detail.best_k || '—' }}</div>
-          <div class="stat-label">Features (k)</div>
+          <div class="stat-label">{{ $t('results.featuresK') }}</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">{{ detail.execution_time?.toFixed(1) }}s</div>
-          <div class="stat-label">Time</div>
+          <div class="stat-label">{{ $t('results.time') }}</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">{{ detail.generation_count }}</div>
-          <div class="stat-label">Generations</div>
+          <div class="stat-label">{{ $t('results.generations') }}</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">{{ detail.feature_count }}</div>
-          <div class="stat-label">Total Features</div>
+          <div class="stat-label">{{ $t('results.totalFeatures') }}</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">{{ detail.sample_count }}</div>
-          <div class="stat-label">Samples</div>
+          <div class="stat-label">{{ $t('results.samples') }}</div>
         </div>
       </div>
 
       <!-- Convergence chart -->
       <section class="section" v-if="generationTracking.length > 0">
-        <h3>AUC Evolution (Train vs Test)</h3>
+        <h3>{{ $t('results.aucEvolution') }}</h3>
         <div ref="convergenceChartEl" class="plotly-chart"></div>
       </section>
 
       <!-- Feature count + fit evolution -->
       <div class="chart-row" v-if="generationTracking.length > 0">
         <section class="section chart-half">
-          <h3>Model Complexity (k)</h3>
+          <h3>{{ $t('results.modelComplexity') }}</h3>
           <div ref="featureCountChartEl" class="plotly-chart"></div>
         </section>
         <section class="section chart-half">
-          <h3>Fit vs AUC</h3>
+          <h3>{{ $t('results.fitVsAuc') }}</h3>
           <div ref="fitEvolutionChartEl" class="plotly-chart"></div>
         </section>
       </div>
@@ -214,7 +214,7 @@
         <div class="best-model-layout">
           <!-- Left column: metrics + radar -->
           <div class="metrics-col">
-            <h3>Metrics</h3>
+            <h3>{{ $t('results.metrics') }}</h3>
             <table class="metrics-table">
               <tr v-for="(val, key) in bestMetrics" :key="key">
                 <td class="metric-name">{{ key }}</td>
@@ -225,7 +225,7 @@
           </div>
           <!-- Right column: coefficients bar chart -->
           <div class="coefficients-col">
-            <h3>Model Coefficients</h3>
+            <h3>{{ $t('results.modelCoefficients') }}</h3>
             <div ref="coefficientsChartEl" class="plotly-chart"></div>
           </div>
         </div>
@@ -233,54 +233,54 @@
 
       <!-- Feature importance -->
       <section class="section" v-if="importanceData && importanceData.length > 0">
-        <h3>Feature Importance (MDA)</h3>
+        <h3>{{ $t('results.featureImportanceMDA') }}</h3>
         <div ref="importanceChartEl" class="plotly-chart"></div>
       </section>
       <p v-else-if="detail.best_individual" class="info-text">
-        Feature importance not available. Enable "Compute importance" in the Parameters tab to include MDA analysis.
+        {{ $t('results.featureImportanceNotAvailable') }}
       </p>
 
       <!-- Coefficient direction chart -->
       <section class="section" v-if="detail.best_individual">
-        <h3>Coefficient Direction</h3>
+        <h3>{{ $t('results.coefficientDirection') }}</h3>
         <div ref="directionChartEl" class="plotly-chart"></div>
       </section>
 
       <!-- Feature contribution waterfall -->
       <section class="section" v-if="detail.best_individual">
-        <h3>Feature Contribution Waterfall</h3>
+        <h3>{{ $t('results.featureContributionWaterfall') }}</h3>
         <div ref="waterfallChartEl" class="plotly-chart"></div>
       </section>
 
       <!-- Per-sample contribution heatmap -->
       <section class="section" v-if="detail.best_individual">
-        <h3>Per-Sample Feature Contributions</h3>
+        <h3>{{ $t('results.perSampleContributions') }}</h3>
         <button v-if="!contributionData && !contributionLoading" class="btn-sm btn-outline" @click="loadContributionHeatmap">
-          Compute Contributions
+          {{ $t('results.computeContributions') }}
         </button>
-        <div v-if="contributionLoading" class="loading">Computing per-sample contributions...</div>
+        <div v-if="contributionLoading" class="loading">{{ $t('results.computingContributions') }}</div>
         <div v-if="contributionData" ref="contributionHeatmapEl" class="plotly-chart plotly-chart-tall"></div>
       </section>
 
       <!-- SHAP-style Feature Explanations -->
       <section class="section" v-if="detail.best_individual">
-        <h3>Feature Explanations (SHAP-like)</h3>
-        <p class="info-text">Per-sample feature contribution breakdown: SHAP value = feature value &times; coefficient.</p>
+        <h3>{{ $t('results.featureExplanations') }}</h3>
+        <p class="info-text">{{ $t('results.shapDescription') }}</p>
         <button v-if="!shapData && !shapLoading" class="btn-sm btn-outline" @click="loadShapData">
-          Compute Explanations
+          {{ $t('results.computeExplanations') }}
         </button>
-        <div v-if="shapLoading" class="loading">Computing SHAP values...</div>
+        <div v-if="shapLoading" class="loading">{{ $t('results.computingShap') }}</div>
         <template v-if="shapData">
           <div class="shap-tabs">
-            <button :class="{ active: shapView === 'beeswarm' }" @click="shapView = 'beeswarm'">Beeswarm</button>
-            <button :class="{ active: shapView === 'force' }" @click="shapView = 'force'">Force Plot</button>
-            <button :class="{ active: shapView === 'dependence' }" @click="shapView = 'dependence'">Dependence</button>
+            <button :class="{ active: shapView === 'beeswarm' }" @click="shapView = 'beeswarm'">{{ $t('results.beeswarm') }}</button>
+            <button :class="{ active: shapView === 'force' }" @click="shapView = 'force'">{{ $t('results.forcePlot') }}</button>
+            <button :class="{ active: shapView === 'dependence' }" @click="shapView = 'dependence'">{{ $t('results.dependence') }}</button>
           </div>
           <!-- Beeswarm: strip plot per feature, x=SHAP value, color=feature value -->
           <div v-if="shapView === 'beeswarm'" ref="beeswarmChartEl" class="plotly-chart plotly-chart-tall"></div>
           <!-- Force: waterfall for single sample -->
           <div v-if="shapView === 'force'" class="shap-control-row">
-            <label>Sample:
+            <label>{{ $t('results.sampleLabel') }}
               <select v-model="shapSampleIdx" class="shap-select">
                 <option v-for="(s, i) in shapData.sampleNames" :key="i" :value="i">{{ s }}</option>
               </select>
@@ -289,7 +289,7 @@
           </div>
           <!-- Dependence: feature value vs SHAP value scatter -->
           <div v-if="shapView === 'dependence'" class="shap-control-row">
-            <label>Feature:
+            <label>{{ $t('results.featureLabel') }}
               <select v-model="shapFeatureIdx" class="shap-select">
                 <option v-for="(f, i) in shapData.featureImportance" :key="i" :value="f.index">{{ featureLabel(f.name) }}</option>
               </select>
@@ -301,24 +301,24 @@
 
       <!-- External validation -->
       <section class="section" v-if="detail.best_individual">
-        <h3>External Validation</h3>
-        <p class="info-text">Score an independent cohort against this model to assess generalisability.</p>
+        <h3>{{ $t('results.externalValidation') }}</h3>
+        <p class="info-text">{{ $t('results.externalValidationDesc') }}</p>
         <button class="btn-sm btn-outline" @click="showValidateModal = true">
-          Validate on New Data
+          {{ $t('results.validateOnNewData') }}
         </button>
       </section>
 
       <!-- Deploy as API -->
       <section class="section" v-if="detail.best_individual">
-        <h3>Prediction API</h3>
-        <p class="info-text">Use this endpoint to score new samples programmatically.</p>
+        <h3>{{ $t('results.predictionApi') }}</h3>
+        <p class="info-text">{{ $t('results.predictionApiDesc') }}</p>
         <div class="deploy-box">
           <div class="deploy-endpoint">
             <code>POST {{ apiBaseUrl }}/api/predict/{{ selectedJobId }}</code>
-            <button class="btn-sm btn-outline" @click="copyDeployUrl">{{ deployCopied ? 'Copied!' : 'Copy' }}</button>
+            <button class="btn-sm btn-outline" @click="copyDeployUrl">{{ deployCopied ? $t('results.copied') : $t('results.copy') }}</button>
           </div>
           <details class="deploy-example">
-            <summary>Usage example (curl)</summary>
+            <summary>{{ $t('results.usageExample') }}</summary>
             <pre class="code-block">curl -X POST {{ apiBaseUrl }}/api/predict/{{ selectedJobId }} \
   -H "X-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
@@ -349,81 +349,81 @@
       <div class="pop-controls">
         <div class="pop-controls-row">
           <label class="topn-control">
-            Top
+            {{ $t('results.top') }}
             <input type="number" v-model.number="topNModels" :min="5" :max="filteredPopulation.length" step="5" class="topn-input" />
-            / {{ filteredPopulation.length }} models
+            / {{ filteredPopulation.length }} {{ $t('results.models') }}
           </label>
           <label class="fbm-toggle">
             <input type="checkbox" v-model="fbmEnabled" />
-            FBM only
+            {{ $t('results.fbmOnly') }}
             <span class="fbm-badge" v-if="fbmEnabled">{{ fbmCount }} / {{ population.length }}</span>
           </label>
         </div>
 
         <!-- Language filter -->
         <div class="filter-row" v-if="availableLanguages.length > 1">
-          <span class="filter-label">Language:</span>
+          <span class="filter-label">{{ $t('results.languageFilter') }}</span>
           <label v-for="lang in availableLanguages" :key="lang" class="filter-check">
             <input type="checkbox" :value="lang" v-model="selectedLanguages" />
             {{ lang }}
           </label>
-          <button v-if="selectedLanguages.length > 0" class="filter-clear" @click="selectedLanguages = []">clear</button>
+          <button v-if="selectedLanguages.length > 0" class="filter-clear" @click="selectedLanguages = []">{{ $t('results.clear') }}</button>
         </div>
 
         <!-- Data type filter -->
         <div class="filter-row" v-if="availableDataTypes.length > 1">
-          <span class="filter-label">Data type:</span>
+          <span class="filter-label">{{ $t('results.dataTypeFilter') }}</span>
           <label v-for="dt in availableDataTypes" :key="dt" class="filter-check">
             <input type="checkbox" :value="dt" v-model="selectedDataTypes" />
             {{ dt }}
           </label>
-          <button v-if="selectedDataTypes.length > 0" class="filter-clear" @click="selectedDataTypes = []">clear</button>
+          <button v-if="selectedDataTypes.length > 0" class="filter-clear" @click="selectedDataTypes = []">{{ $t('results.clear') }}</button>
         </div>
       </div>
 
       <!-- Language / Data Type composition -->
       <div class="chart-row" v-if="filteredPopulation.length > 0">
         <section class="section chart-half">
-          <h3>Composition by Language &times; Data Type</h3>
+          <h3>{{ $t('results.compositionByType') }}</h3>
           <div ref="compositionChartEl" class="plotly-chart"></div>
         </section>
         <section class="section chart-half">
-          <h3>AUC Distribution by Type</h3>
+          <h3>{{ $t('results.aucDistribution') }}</h3>
           <div ref="metricsByTypeEl" class="plotly-chart"></div>
         </section>
       </div>
 
       <!-- Feature-model heatmap -->
       <section class="section" v-if="filteredPopulation.length > 0">
-        <h3>Feature-Model Coefficients</h3>
+        <h3>{{ $t('results.featureModelCoefficients') }}</h3>
         <div ref="featureHeatmapEl" class="plotly-chart"></div>
       </section>
 
       <!-- Feature prevalence + pop metrics side by side -->
       <div class="chart-row" v-if="filteredPopulation.length > 0">
         <section class="section chart-half">
-          <h3>Feature Prevalence</h3>
+          <h3>{{ $t('results.featurePrevalence') }}</h3>
           <div ref="featurePrevalenceEl" class="plotly-chart"></div>
         </section>
         <section class="section chart-half">
-          <h3>Population Metrics</h3>
+          <h3>{{ $t('results.populationMetrics') }}</h3>
           <div ref="popMetricsEl" class="plotly-chart"></div>
         </section>
       </div>
 
       <!-- Population table -->
       <section class="section" v-if="filteredPopulation.length > 0">
-        <h3>Population Table ({{ filteredPopulation.length }} individuals)</h3>
+        <h3>{{ $t('results.populationTable', { n: filteredPopulation.length }) }}</h3>
         <table class="pop-table">
           <thead>
             <tr>
-              <th>#</th>
-              <th>AUC</th>
-              <th>Fit</th>
-              <th>Accuracy</th>
-              <th>k</th>
-              <th>Language</th>
-              <th>Data Type</th>
+              <th>{{ $t('results.rank') }}</th>
+              <th>{{ $t('results.auc') }}</th>
+              <th>{{ $t('results.fit') }}</th>
+              <th>{{ $t('results.accuracy') }}</th>
+              <th>{{ $t('results.k') }}</th>
+              <th>{{ $t('results.language') }}</th>
+              <th>{{ $t('results.dataType') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -455,13 +455,13 @@
           </tbody>
         </table>
         <div class="pagination" v-if="filteredPopulation.length > popPageSize">
-          <button @click="popPage = Math.max(0, popPage - 1)" :disabled="popPage === 0">&laquo; Prev</button>
-          <span>Page {{ popPage + 1 }} / {{ Math.ceil(filteredPopulation.length / popPageSize) }}</span>
-          <button @click="popPage++" :disabled="(popPage + 1) * popPageSize >= filteredPopulation.length">Next &raquo;</button>
+          <button @click="popPage = Math.max(0, popPage - 1)" :disabled="popPage === 0">&laquo; {{ $t('results.prev') }}</button>
+          <span>{{ $t('results.page') }} {{ popPage + 1 }} / {{ Math.ceil(filteredPopulation.length / popPageSize) }}</span>
+          <button @click="popPage++" :disabled="(popPage + 1) * popPageSize >= filteredPopulation.length">{{ $t('results.next') }} &raquo;</button>
         </div>
       </section>
-      <p v-if="population.length === 0" class="info-text">Population data not available for this job.</p>
-      <p v-else-if="filteredPopulation.length === 0" class="info-text">No models match the current filters.</p>
+      <p v-if="population.length === 0" class="info-text">{{ $t('results.popNotAvailable') }}</p>
+      <p v-else-if="filteredPopulation.length === 0" class="info-text">{{ $t('results.noModelsMatch') }}</p>
     </div>
 
     <!-- ============================================================ -->
@@ -473,49 +473,49 @@
         <div class="summary-grid">
           <div class="stat-card">
             <div class="stat-value">{{ juryData.method }}</div>
-            <div class="stat-label">Voting Method</div>
+            <div class="stat-label">{{ $t('results.votingMethod') }}</div>
           </div>
           <div class="stat-card">
             <div class="stat-value">{{ juryData.expert_count }}</div>
-            <div class="stat-label">Experts</div>
+            <div class="stat-label">{{ $t('results.experts') }}</div>
           </div>
           <div class="stat-card">
             <div class="stat-value">{{ juryData.test?.auc?.toFixed(4) || '—' }}</div>
-            <div class="stat-label">Test AUC</div>
+            <div class="stat-label">{{ $t('results.testAucLabel') }}</div>
           </div>
           <div class="stat-card">
             <div class="stat-value">{{ juryData.test?.accuracy?.toFixed(4) || '—' }}</div>
-            <div class="stat-label">Test Accuracy</div>
+            <div class="stat-label">{{ $t('results.testAccuracy') }}</div>
           </div>
           <div class="stat-card">
             <div class="stat-value">{{ juryData.test?.sensitivity?.toFixed(4) || '—' }}</div>
-            <div class="stat-label">Test Sensitivity</div>
+            <div class="stat-label">{{ $t('results.testSensitivity') }}</div>
           </div>
           <div class="stat-card">
             <div class="stat-value">{{ juryData.test?.specificity?.toFixed(4) || '—' }}</div>
-            <div class="stat-label">Test Specificity</div>
+            <div class="stat-label">{{ $t('results.testSpecificity') }}</div>
           </div>
         </div>
 
         <!-- Jury vs Best Model comparison -->
         <section class="section">
-          <h3>Jury vs Best Individual</h3>
+          <h3>{{ $t('results.juryVsBest') }}</h3>
           <div ref="juryComparisonEl" class="plotly-chart"></div>
         </section>
 
         <!-- Concordance + Confusion matrices -->
         <div class="chart-row">
           <section class="section chart-half" v-if="juryData.sample_predictions?.length || juryData.confusion_train">
-            <h3>Classification Concordance</h3>
+            <h3>{{ $t('results.classificationConcordance') }}</h3>
             <div ref="juryConcordanceEl" class="plotly-chart"></div>
           </section>
           <div class="chart-half jury-cm-stack">
             <section class="section" v-if="juryData.confusion_train">
-              <h3>Confusion Matrix (Train)</h3>
+              <h3>{{ $t('results.confusionTrain') }}</h3>
               <div ref="juryConfusionTrainEl" class="plotly-chart"></div>
             </section>
             <section class="section" v-if="juryData.confusion_test">
-              <h3>Confusion Matrix (Test)</h3>
+              <h3>{{ $t('results.confusionTest') }}</h3>
               <div ref="juryConfusionTestEl" class="plotly-chart"></div>
             </section>
           </div>
@@ -523,29 +523,29 @@
 
         <!-- Vote Matrix Heatmap -->
         <section class="section" v-if="juryData.vote_matrix">
-          <h3>Vote Matrix ({{ juryData.vote_matrix.sample_names?.length }} samples × {{ juryData.vote_matrix.n_experts }} experts)</h3>
+          <h3>{{ $t('results.voteMatrix') }} ({{ $t('results.samplesExperts', { samples: juryData.vote_matrix.sample_names?.length, experts: juryData.vote_matrix.n_experts }) }})</h3>
           <div ref="voteMatrixEl" class="plotly-chart plotly-chart-tall"></div>
         </section>
 
         <!-- Per-sample predictions visual (paginated, ordered by error rate) -->
         <section class="section" v-if="juryData.sample_predictions?.length > 0">
-          <h3>Sample Predictions ({{ juryData.sample_predictions.length }} samples — sorted by error rate)</h3>
+          <h3>{{ $t('results.samplePredictions', { n: juryData.sample_predictions.length }) }}</h3>
           <div ref="samplePredictionsEl" class="plotly-chart"></div>
           <div class="pagination" v-if="juryData.sample_predictions.length > samplePredPageSize">
-            <button @click="changeSamplePredPage(samplePredPage - 1)" :disabled="samplePredPage === 0">&laquo; Prev</button>
-            <span>Page {{ samplePredPage + 1 }} / {{ Math.ceil(juryData.sample_predictions.length / samplePredPageSize) }}</span>
-            <button @click="changeSamplePredPage(samplePredPage + 1)" :disabled="(samplePredPage + 1) * samplePredPageSize >= juryData.sample_predictions.length">Next &raquo;</button>
+            <button @click="changeSamplePredPage(samplePredPage - 1)" :disabled="samplePredPage === 0">&laquo; {{ $t('results.prev') }}</button>
+            <span>{{ $t('results.page') }} {{ samplePredPage + 1 }} / {{ Math.ceil(juryData.sample_predictions.length / samplePredPageSize) }}</span>
+            <button @click="changeSamplePredPage(samplePredPage + 1)" :disabled="(samplePredPage + 1) * samplePredPageSize >= juryData.sample_predictions.length">{{ $t('results.next') }} &raquo;</button>
           </div>
         </section>
 
         <!-- FBM info -->
         <section class="section" v-if="juryData.fbm">
-          <h3>FBM Expert Population ({{ juryData.fbm.count }} models)</h3>
+          <h3>{{ $t('results.fbmExpertPop', { n: juryData.fbm.count }) }}</h3>
           <table class="metrics-table" style="max-width: 100%;">
             <tr>
               <td class="metric-name"></td>
-              <td class="metric-value" style="font-size: 0.75rem; color: var(--text-muted);">Train</td>
-              <td class="metric-value" style="font-size: 0.75rem; color: var(--text-muted);">Test</td>
+              <td class="metric-value" style="font-size: 0.75rem; color: var(--text-muted);">{{ $t('results.train') }}</td>
+              <td class="metric-value" style="font-size: 0.75rem; color: var(--text-muted);">{{ $t('results.test') }}</td>
             </tr>
             <tr v-for="m in ['auc', 'accuracy', 'sensitivity', 'specificity']" :key="m">
               <td class="metric-name">{{ m.charAt(0).toUpperCase() + m.slice(1) }}</td>
@@ -556,7 +556,7 @@
         </section>
       </template>
       <p v-else class="info-text">
-        Jury data not available. Enable "Voting" in the Parameters tab and re-run.
+        {{ $t('results.juryNotAvailable') }}
       </p>
     </div>
 
@@ -566,7 +566,7 @@
     <div v-if="detail && subTab === 'comparative'" class="sub-content">
       <!-- Job checkboxes -->
       <section class="section" v-if="completedJobs.length > 1">
-        <h3>Select Jobs to Compare</h3>
+        <h3>{{ $t('results.selectJobsCompare') }}</h3>
         <div class="job-checkboxes">
           <label v-for="j in completedJobs" :key="j.job_id" class="job-check">
             <input type="checkbox" :value="j.job_id" v-model="compareJobIds" />
@@ -582,12 +582,12 @@
       <template v-if="compareData.length >= 2">
         <!-- Side-by-side metrics table -->
         <section class="section">
-          <h3>Metrics Comparison</h3>
+          <h3>{{ $t('results.metricsComparison') }}</h3>
           <div class="compare-table-wrap">
             <table class="compare-table">
               <thead>
                 <tr>
-                  <th>Metric</th>
+                  <th>{{ $t('results.metric') }}</th>
                   <th v-for="d in compareData" :key="d.job_id">{{ d.name || d.job_id.slice(0, 8) }}</th>
                 </tr>
               </thead>
@@ -600,15 +600,15 @@
                   </td>
                 </tr>
                 <tr>
-                  <td class="metric-name">Time</td>
+                  <td class="metric-name">{{ $t('results.time') }}</td>
                   <td v-for="d in compareData" :key="d.job_id">{{ d.execution_time ? formatDuration(d.execution_time) : '—' }}</td>
                 </tr>
                 <tr>
-                  <td class="metric-name">Generations</td>
+                  <td class="metric-name">{{ $t('results.generations') }}</td>
                   <td v-for="d in compareData" :key="d.job_id">{{ d.generation_count || '—' }}</td>
                 </tr>
                 <tr>
-                  <td class="metric-name">Population</td>
+                  <td class="metric-name">{{ $t('results.population') }}</td>
                   <td v-for="d in compareData" :key="d.job_id">{{ d.population?.length || '—' }}</td>
                 </tr>
               </tbody>
@@ -618,7 +618,7 @@
 
         <!-- Config diff -->
         <section class="section" v-if="configDiffs.length > 0">
-          <h3>Configuration Differences</h3>
+          <h3>{{ $t('results.configDifferences') }}</h3>
           <div class="compare-table-wrap">
             <table class="compare-table config-diff-table">
               <thead>
@@ -637,53 +637,53 @@
               </tbody>
             </table>
           </div>
-          <p v-if="configDiffs.length === 0" class="info-text">All selected jobs have identical configuration.</p>
+          <p v-if="configDiffs.length === 0" class="info-text">{{ $t('results.identicalConfig') }}</p>
         </section>
 
         <section class="section">
-          <h3>Performance Comparison</h3>
+          <h3>{{ $t('results.performanceComparison') }}</h3>
           <div ref="comparisonBarEl" class="plotly-chart"></div>
         </section>
 
         <!-- Feature analysis -->
         <section class="section">
-          <h3>Feature Analysis</h3>
+          <h3>{{ $t('results.featureAnalysis') }}</h3>
           <div class="feature-analysis">
             <div class="feature-stat">
-              <span class="fa-label">Common to all jobs:</span>
-              <span class="fa-value">{{ featureIntersection.length }} features</span>
+              <span class="fa-label">{{ $t('results.commonToAll') }}</span>
+              <span class="fa-value">{{ featureIntersection.length }} {{ $t('results.features') }}</span>
             </div>
             <div class="feature-stat">
-              <span class="fa-label">Union (any job):</span>
-              <span class="fa-value">{{ featureUnion.length }} features</span>
+              <span class="fa-label">{{ $t('results.unionAny') }}</span>
+              <span class="fa-value">{{ featureUnion.length }} {{ $t('results.features') }}</span>
             </div>
             <div class="feature-stat" v-if="featureIntersection.length > 0">
-              <span class="fa-label">Overlap ratio:</span>
+              <span class="fa-label">{{ $t('results.overlapRatio') }}</span>
               <span class="fa-value">{{ (featureIntersection.length / featureUnion.length * 100).toFixed(1) }}%</span>
             </div>
           </div>
           <div v-if="featureIntersection.length > 0" class="common-features">
-            <strong>Common features:</strong>
+            <strong>{{ $t('results.commonFeatures') }}</strong>
             <span v-for="f in featureIntersection" :key="f" class="feature-chip positive">{{ featureLabel(f) }}</span>
           </div>
         </section>
 
         <section class="section">
-          <h3>Convergence Overlay</h3>
+          <h3>{{ $t('results.convergenceOverlay') }}</h3>
           <div ref="comparisonConvergenceEl" class="plotly-chart"></div>
         </section>
 
         <section class="section">
-          <h3>Feature Overlap</h3>
+          <h3>{{ $t('results.featureOverlap') }}</h3>
           <div ref="featureOverlapEl" class="plotly-chart"></div>
         </section>
       </template>
 
       <p v-if="completedJobs.length < 2" class="info-text">
-        Run at least 2 completed jobs to enable comparative analysis.
+        {{ $t('results.runAtLeast2') }}
       </p>
       <p v-else-if="compareData.length < 2" class="info-text">
-        Select at least 2 jobs above to compare.
+        {{ $t('results.selectAtLeast2') }}
       </p>
     </div>
 
@@ -696,16 +696,16 @@
         <div class="pop-controls-row">
           <label class="fbm-toggle">
             <input type="checkbox" v-model="copresenceFBM" />
-            FBM only
+            {{ $t('results.fbmOnly') }}
             <span class="fbm-badge" v-if="copresenceFBM">{{ fbmCount }} / {{ population.length }}</span>
           </label>
           <label class="topn-control" style="margin-left: 1rem;">
-            Min prevalence
+            {{ $t('results.minPrevalence') }}
             <input type="number" v-model.number="copresenceMinPrev" :min="2" :max="population.length" step="1" class="topn-input" />
-            models
+            {{ $t('results.models') }}
           </label>
           <label class="topn-control" style="margin-left: 1rem;">
-            p-value &le;
+            {{ $t('results.pValueThreshold') }}
             <select v-model.number="copresenceAlpha" class="topn-input" style="width: 5rem;">
               <option :value="0.2">0.20</option>
               <option :value="0.1">0.10</option>
@@ -718,45 +718,45 @@
 
       <!-- Feature prevalence in population -->
       <section class="section" v-if="copresencePopulation.length > 1">
-        <h3>Feature Prevalence in Population ({{ copresencePopulation.length }} models)</h3>
+        <h3>{{ $t('results.featurePrevalenceInPop', { n: copresencePopulation.length }) }}</h3>
         <div ref="copresencePrevalenceEl" class="plotly-chart"></div>
       </section>
 
       <!-- Functional annotation summary -->
       <section class="section" v-if="copresencePopulation.length > 1 && Object.keys(mspAnnotations).length > 0">
-        <h3>Functional Annotations</h3>
+        <h3>{{ $t('results.functionalAnnotations') }}</h3>
         <p class="info-text" style="margin-bottom: 0.5rem;">
-          Functional properties of features present in the population, from biobanks.gmt.bio.
+          {{ $t('results.funcAnnotDesc') }}
         </p>
         <div ref="funcAnnotChartEl" class="plotly-chart"></div>
         <!-- Annotation table per feature -->
         <details class="advanced-toggle" style="margin-top: 0.75rem;">
-          <summary>Feature annotation details ({{ funcAnnotatedFeatures.length }} annotated)</summary>
+          <summary>{{ $t('results.featureAnnotDetails', { n: funcAnnotatedFeatures.length }) }}</summary>
           <table class="pop-table" style="margin-top: 0.5rem;">
             <thead>
               <tr>
-                <th>Feature</th>
-                <th>Taxonomy</th>
-                <th>Butyrate</th>
-                <th>Inflammation</th>
-                <th>Transit</th>
-                <th>Oral</th>
+                <th>{{ $t('results.colFeature') }}</th>
+                <th>{{ $t('results.colTaxonomy') }}</th>
+                <th>{{ $t('results.colButyrate') }}</th>
+                <th>{{ $t('results.colInflammation') }}</th>
+                <th>{{ $t('results.colTransit') }}</th>
+                <th>{{ $t('results.colOral') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="f in funcAnnotatedFeatures" :key="f.name">
                 <td>{{ f.name }}</td>
                 <td style="font-style: italic; font-size: 0.78rem;">{{ f.species }}</td>
-                <td><span v-if="f.butyrate === 1" class="func-badge func-positive">Producer</span></td>
+                <td><span v-if="f.butyrate === 1" class="func-badge func-positive">{{ $t('results.producer') }}</span></td>
                 <td>
-                  <span v-if="f.inflammation === 1" class="func-badge func-negative">Enriched</span>
-                  <span v-else-if="f.inflammation === -1" class="func-badge func-positive">Depleted</span>
+                  <span v-if="f.inflammation === 1" class="func-badge func-negative">{{ $t('results.enriched') }}</span>
+                  <span v-else-if="f.inflammation === -1" class="func-badge func-positive">{{ $t('results.depleted') }}</span>
                 </td>
                 <td>
-                  <span v-if="f.transit === 1" class="func-badge func-neutral">Fast</span>
-                  <span v-else-if="f.transit === -1" class="func-badge func-neutral">Slow</span>
+                  <span v-if="f.transit === 1" class="func-badge func-neutral">{{ $t('results.fast') }}</span>
+                  <span v-else-if="f.transit === -1" class="func-badge func-neutral">{{ $t('results.slow') }}</span>
                 </td>
-                <td><span v-if="f.oralisation === 1" class="func-badge func-warn">Oral</span></td>
+                <td><span v-if="f.oralisation === 1" class="func-badge func-warn">{{ $t('results.oral') }}</span></td>
               </tr>
             </tbody>
           </table>
@@ -765,10 +765,9 @@
 
       <!-- Co-occurrence heatmap -->
       <section class="section" v-if="copresencePopulation.length > 1">
-        <h3>Feature Co-occurrence Matrix</h3>
+        <h3>{{ $t('results.cooccurrenceMatrix') }}</h3>
         <p class="info-text" style="margin-bottom: 0.5rem;">
-          Ratio of observed to expected co-occurrence. Higher values (yellow) indicate features that co-occur more often than expected;
-          lower values (purple) indicate mutual exclusion.
+          {{ $t('results.cooccurrenceMatrixDesc') }}
         </p>
         <div ref="copresenceHeatmapEl" class="plotly-chart"></div>
       </section>
@@ -776,7 +775,7 @@
       <!-- Co-occurrence network -->
       <section class="section" v-if="copresencePopulation.length > 1">
         <div class="network-header">
-          <h3>Co-occurrence Network</h3>
+          <h3>{{ $t('results.cooccurrenceNetwork') }}</h3>
           <div class="layout-selector">
             <label v-for="opt in networkLayoutOptions" :key="opt.value" class="layout-option" :class="{ active: networkLayout === opt.value }">
               <input type="radio" :value="opt.value" v-model="networkLayout" />
@@ -785,25 +784,24 @@
           </div>
         </div>
         <p class="info-text" style="margin-bottom: 0.5rem;">
-          Nodes sized by prevalence. Edges connect features that co-occur significantly more (green)
-          or less (red dashed) than expected. Edge width = strength of association.
+          {{ $t('results.networkDesc') }}
         </p>
         <div ref="copresenceNetworkEl" class="plotly-chart"></div>
       </section>
 
       <!-- Co-occurrence statistics table -->
       <section class="section" v-if="copresenceStats.length > 0">
-        <h3>Significant Co-occurrence Pairs ({{ copresenceStats.length }})</h3>
+        <h3>{{ $t('results.significantPairs', { n: copresenceStats.length }) }}</h3>
         <table class="pop-table">
           <thead>
             <tr>
-              <th>Feature 1</th>
-              <th>Feature 2</th>
-              <th>Observed</th>
-              <th>Expected</th>
-              <th>Ratio</th>
-              <th>p-value</th>
-              <th>Type</th>
+              <th>{{ $t('results.colFeature1') }}</th>
+              <th>{{ $t('results.colFeature2') }}</th>
+              <th>{{ $t('results.colObserved') }}</th>
+              <th>{{ $t('results.colExpected') }}</th>
+              <th>{{ $t('results.colRatio') }}</th>
+              <th>{{ $t('results.colPValue') }}</th>
+              <th>{{ $t('results.colType') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -817,31 +815,31 @@
               </td>
               <td>{{ row.pvalue < 0.001 ? row.pvalue.toExponential(1) : row.pvalue.toFixed(3) }}</td>
               <td>
-                <span class="cooccur-type" :class="row.type">{{ row.type === 'positive' ? 'Co-occur' : 'Exclude' }}</span>
+                <span class="cooccur-type" :class="row.type">{{ row.type === 'positive' ? $t('results.cooccur') : $t('results.exclude') }}</span>
               </td>
             </tr>
           </tbody>
         </table>
         <div class="pagination" v-if="copresenceStats.length > copresencePageSize">
-          <button @click="copresencePage = Math.max(0, copresencePage - 1)" :disabled="copresencePage === 0">&laquo; Prev</button>
-          <span>Page {{ copresencePage + 1 }} / {{ Math.ceil(copresenceStats.length / copresencePageSize) }}</span>
-          <button @click="copresencePage++" :disabled="(copresencePage + 1) * copresencePageSize >= copresenceStats.length">Next &raquo;</button>
+          <button @click="copresencePage = Math.max(0, copresencePage - 1)" :disabled="copresencePage === 0">&laquo; {{ $t('results.prev') }}</button>
+          <span>{{ $t('results.page') }} {{ copresencePage + 1 }} / {{ Math.ceil(copresenceStats.length / copresencePageSize) }}</span>
+          <button @click="copresencePage++" :disabled="(copresencePage + 1) * copresencePageSize >= copresenceStats.length">{{ $t('results.next') }} &raquo;</button>
         </div>
       </section>
 
       <p v-if="population.length < 2" class="info-text">
-        Co-presence analysis requires at least 2 models in the population.
+        {{ $t('results.copresenceRequires2') }}
       </p>
     </div>
 
     <!-- Empty states -->
     <div v-if="!detail && jobs.length === 0" class="empty">
-      No analysis jobs yet. Go to Data &amp; Run to launch an analysis.
+      {{ $t('results.noJobsYet') }}
     </div>
     <div v-if="!detail && jobs.length > 0 && !loading" class="empty">
-      Select a completed job above to view results.
+      {{ $t('results.selectCompletedJob') }}
     </div>
-    <div v-if="loading" class="loading">Loading results...</div>
+    <div v-if="loading" class="loading">{{ $t('results.loadingResults') }}</div>
   </div>
 </template>
 
@@ -853,6 +851,7 @@ import { useChartTheme } from '../composables/useChartTheme'
 import { useShapValues } from '../composables/useShapValues'
 import axios from 'axios'
 import ValidateModal from '../components/ValidateModal.vue'
+import { useI18n } from 'vue-i18n'
 // Lazy-load Plotly for better initial page load
 let Plotly = null
 async function ensurePlotly() {
@@ -867,6 +866,7 @@ const route = useRoute()
 const store = useProjectStore()
 const { themeStore, chartColors, chartLayout, featureLabel: _featureLabel, FUNC_PROPS } = useChartTheme()
 const { computeShapMatrix } = useShapValues()
+const { t } = useI18n()
 
 // ---------------------------------------------------------------------------
 // State
@@ -970,12 +970,12 @@ const funcAnnotChartEl = ref(null)
 const copresencePage = ref(0)
 const copresencePageSize = 20
 const networkLayout = ref('force')
-const networkLayoutOptions = [
-  { value: 'force', label: 'Force-directed' },
-  { value: 'circle', label: 'Circle' },
-  { value: 'grid', label: 'Grid' },
-  { value: 'radial', label: 'Radial' },
-]
+const networkLayoutOptions = computed(() => [
+  { value: 'force', label: t('results.forceDirected') },
+  { value: 'circle', label: t('results.circle') },
+  { value: 'grid', label: t('results.grid') },
+  { value: 'radial', label: t('results.radial') },
+])
 
 // ---------------------------------------------------------------------------
 // Computed
