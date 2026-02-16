@@ -245,15 +245,29 @@ class DatasetResponse(BaseModel):
     name: str
     description: str = ""
     tags: list[str] = []
+    archived: bool = False
     files: list[DatasetFileRef] = []
     created_at: str = ""
     project_count: int = 0
+    metadata: Optional[dict] = None
+
+
+class DatasetUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    class_names: Optional[dict] = None
 
 
 class ProjectInfo(BaseModel):
     project_id: str
     name: str
     description: str = ""
+    class_names: Optional[dict] = None
     created_at: str
     updated_at: Optional[str] = None
     datasets: list[DatasetRef] = []

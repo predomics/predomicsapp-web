@@ -14,7 +14,7 @@
             @keyup.escape="cancelEdit"
             @blur="saveEdit"
           />
-          <button v-if="!editing" class="btn-icon-sm" @click="startEdit" title="Rename">&#9998;</button>
+          <button v-if="!editing" class="btn-icon-sm" @click="startEdit" title="Rename"><SvgIcon name="pencil" :size="14" /></button>
         </div>
         <p v-if="!editingDesc && project.description" class="desc" @dblclick="startDescEdit">{{ project.description }}</p>
         <p v-if="!editingDesc && !project.description" class="desc desc-placeholder" @dblclick="startDescEdit">Add a description...</p>
@@ -84,6 +84,7 @@
 <script setup>
 import { ref, computed, nextTick } from 'vue'
 import { useProjectStore } from '../../stores/project'
+import SvgIcon from '../SvgIcon.vue'
 
 const props = defineProps({
   project: { type: Object, default: null },

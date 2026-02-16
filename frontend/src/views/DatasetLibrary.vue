@@ -11,6 +11,10 @@
           <option v-for="tag in store.tagSuggestions" :key="tag" :value="tag">{{ tag }}</option>
         </select>
       </div>
+      <label class="archive-toggle">
+        <input type="checkbox" v-model="showArchived" @change="applyFilters" />
+        {{ $t('datasets.showArchived') }}
+      </label>
       <button v-if="searchQuery || filterTag" class="clear-filter" @click="clearFilters">{{ $t('datasets.clear') }}</button>
     </div>
 
@@ -32,11 +36,34 @@
     </div>
 
     <div v-if="store.datasets.length > 0" class="dataset-list">
-      <div v-for="d in store.datasets" :key="d.id" class="dataset-card">
+      <div v-for="d in store.datasets" :key="d.id" class="dataset-card" :class="{ archived: d.archived }">
         <div class="card-header">
           <div class="card-content">
-            <h3>{{ d.name }}</h3>
-            <p v-if="d.description" class="desc">{{ d.description }}</p>
+            <!-- Inline editable name -->
+            <h3 v-if="editingId !== d.id" @click="startEdit(d)" class="editable-name">{{ d.name }}</h3>
+            <input
+              v-else
+              v-model="editName"
+              class="edit-name-input"
+              @keyup.enter="saveEdit(d)"
+              @keyup.escape="cancelEdit"
+              @blur="saveEdit(d)"
+              ref="editNameInput"
+            />
+            <!-- Inline editable description -->
+            <p v-if="editingId !== d.id" @click="startEditDesc(d)" class="desc editable-desc">
+              {{ d.description || $t('datasets.addDescription') }}
+            </p>
+            <input
+              v-else-if="editingField === 'desc'"
+              v-model="editDesc"
+              class="edit-desc-input"
+              :placeholder="$t('datasets.description')"
+              @keyup.enter="saveEditDesc(d)"
+              @keyup.escape="cancelEdit"
+              @blur="saveEditDesc(d)"
+              ref="editDescInput"
+            />
             <!-- Tags -->
             <div class="tag-row" v-if="d.tags?.length > 0 || editingTagsId === d.id">
               <template v-if="editingTagsId !== d.id">
@@ -65,9 +92,45 @@
               <span>{{ d.files?.length || 0 }} {{ $t('datasets.files') }}</span>
               <span v-if="d.project_count > 0">{{ d.project_count }} {{ $t('datasets.projects') }}</span>
               <span v-else class="unused">{{ $t('datasets.notAssigned') }}</span>
+              <template v-if="d.metadata">
+                <span class="meta-dim">{{ d.metadata.n_features }} {{ $t('datasets.nFeatures') }}</span>
+                <span class="meta-dim">{{ d.metadata.n_samples }} {{ $t('datasets.nSamples') }}</span>
+                <span class="meta-dim">{{ d.metadata.n_classes }} {{ $t('datasets.nClasses') }}</span>
+              </template>
+              <button
+                v-else-if="hasTrainFiles(d)"
+                class="scan-btn"
+                @click.stop="scanDs(d)"
+                :disabled="scanning === d.id"
+              >
+                <SvgIcon name="scan" :size="11" />
+                {{ scanning === d.id ? $t('datasets.scanning') : $t('datasets.scan') }}
+              </button>
+            </div>
+            <!-- Class names -->
+            <div v-if="d.metadata?.class_labels" class="class-row">
+              <span class="class-label-text">{{ $t('datasets.classNames') }}:</span>
+              <span v-for="cls in d.metadata.class_labels" :key="cls" class="class-chip">
+                <span class="class-idx">{{ cls }}</span>
+                <input
+                  type="text"
+                  class="class-name-input"
+                  :value="d.metadata?.class_names?.[cls] || ''"
+                  :placeholder="$t('datasets.classPlaceholder')"
+                  @blur="e => saveClassName(d, cls, e.target.value)"
+                  @keyup.enter="e => e.target.blur()"
+                />
+              </span>
             </div>
           </div>
-          <button class="delete-btn" @click="deleteDs(d)" :title="$t('common.delete')">&times;</button>
+          <div class="card-actions">
+            <button class="archive-btn" @click="toggleArchive(d)" :title="d.archived ? $t('datasets.unarchive') : $t('datasets.archive')">
+              <SvgIcon :name="d.archived ? 'unarchive' : 'archive'" :size="14" />
+            </button>
+            <button class="delete-btn" @click="deleteDs(d)" :title="$t('common.delete')">
+              <SvgIcon name="trash" :size="14" />
+            </button>
+          </div>
         </div>
 
         <!-- Files within group -->
@@ -75,8 +138,8 @@
           <div v-for="f in d.files" :key="f.id" class="file-row">
             <span class="file-name">{{ f.filename }}</span>
             <span v-if="f.role" class="file-role">{{ f.role }}</span>
-            <button class="file-preview" @click="openPreview(d.id, f.id, f.filename)" :title="$t('datasets.preview')">{{ $t('datasets.preview') }}</button>
-            <button class="file-del" @click="deleteFile(d, f)" :title="$t('common.remove')">&times;</button>
+            <button class="file-preview" @click="openPreview(d.id, f.id, f.filename)" :title="$t('datasets.preview')"><SvgIcon name="eye" :size="12" /> {{ $t('datasets.preview') }}</button>
+            <button class="file-del" @click="deleteFile(d, f)" :title="$t('common.remove')"><SvgIcon name="x" :size="12" /></button>
           </div>
         </div>
 
@@ -99,7 +162,7 @@
 
         <!-- Upload file into group -->
         <label class="upload-into">
-          {{ $t('datasets.addFile') }}
+          <SvgIcon name="upload" :size="12" /> {{ $t('datasets.addFile') }}
           <input type="file" accept=".tsv,.csv,.txt" @change="e => addFile(e, d.id)" />
         </label>
       </div>
@@ -129,6 +192,7 @@ import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import { useDatasetStore } from '../stores/dataset'
 import DatasetPreviewModal from '../components/DatasetPreviewModal.vue'
+import SvgIcon from '../components/SvgIcon.vue'
 
 const { t } = useI18n()
 const store = useDatasetStore()
@@ -146,12 +210,24 @@ const message = ref('')
 const msgType = ref('success')
 const searchQuery = ref('')
 const filterTag = ref('')
+const showArchived = ref(false)
 const editingTagsId = ref(null)
 const editTagsValue = ref('')
 const tagEditInput = ref(null)
 
+// Scan state
+const scanning = ref(null)
+
+// Inline edit state
+const editingId = ref(null)
+const editingField = ref(null) // 'name' or 'desc'
+const editName = ref('')
+const editDesc = ref('')
+const editNameInput = ref(null)
+const editDescInput = ref(null)
+
 async function applyFilters() {
-  await store.fetchDatasets(filterTag.value || null, searchQuery.value || null)
+  await store.fetchDatasets(filterTag.value || null, searchQuery.value || null, showArchived.value)
 }
 
 function clearFilters() {
@@ -188,6 +264,76 @@ async function saveTags(d) {
     msgType.value = 'error'
   }
   editingTagsId.value = null
+}
+
+// --- Inline editing ---
+function startEdit(d) {
+  editingId.value = d.id
+  editingField.value = 'name'
+  editName.value = d.name
+  editDesc.value = d.description || ''
+  nextTick(() => {
+    const el = Array.isArray(editNameInput.value) ? editNameInput.value[0] : editNameInput.value
+    if (el) el.focus()
+  })
+}
+
+function startEditDesc(d) {
+  editingId.value = d.id
+  editingField.value = 'desc'
+  editDesc.value = d.description || ''
+  nextTick(() => {
+    const el = Array.isArray(editDescInput.value) ? editDescInput.value[0] : editDescInput.value
+    if (el) el.focus()
+  })
+}
+
+function cancelEdit() {
+  editingId.value = null
+  editingField.value = null
+}
+
+async function saveEdit(d) {
+  const name = editName.value.trim()
+  if (!name || name === d.name) { cancelEdit(); return }
+  try {
+    await store.updateDataset(d.id, { name })
+    message.value = t('datasets.editSaved')
+    msgType.value = 'success'
+  } catch (e) {
+    message.value = e.response?.data?.detail || t('datasets.editFailed')
+    msgType.value = 'error'
+  }
+  cancelEdit()
+}
+
+async function saveEditDesc(d) {
+  const description = editDesc.value.trim()
+  if (description === (d.description || '')) { cancelEdit(); return }
+  try {
+    await store.updateDataset(d.id, { description })
+    message.value = t('datasets.editSaved')
+    msgType.value = 'success'
+  } catch (e) {
+    message.value = e.response?.data?.detail || t('datasets.editFailed')
+    msgType.value = 'error'
+  }
+  cancelEdit()
+}
+
+async function toggleArchive(d) {
+  try {
+    const result = await store.archiveDataset(d.id)
+    message.value = result.archived ? t('datasets.archivedMsg', { name: d.name }) : t('datasets.unarchivedMsg', { name: d.name })
+    msgType.value = 'success'
+    if (!showArchived.value && result.archived) {
+      // Remove from visible list if we're not showing archived
+      store.datasets = store.datasets.filter(ds => ds.id !== d.id)
+    }
+  } catch (e) {
+    message.value = e.response?.data?.detail || t('datasets.archiveFailed')
+    msgType.value = 'error'
+  }
 }
 
 async function createGroup() {
@@ -276,6 +422,36 @@ async function restoreVersion(d, v) {
   }
 }
 
+async function saveClassName(d, cls, name) {
+  const existing = d.metadata?.class_names || {}
+  const updated = { ...existing, [cls]: name.trim() }
+  // Remove empty names
+  for (const k of Object.keys(updated)) {
+    if (!updated[k]) delete updated[k]
+  }
+  try {
+    await store.updateClassNames(d.id, updated)
+  } catch { /* silent */ }
+}
+
+function hasTrainFiles(d) {
+  return d.files?.some(f => f.role === 'xtrain') && d.files?.some(f => f.role === 'ytrain')
+}
+
+async function scanDs(d) {
+  scanning.value = d.id
+  try {
+    await store.scanDataset(d.id)
+    message.value = t('datasets.scanComplete', { name: d.name })
+    msgType.value = 'success'
+  } catch (e) {
+    message.value = e.response?.data?.detail || t('datasets.scanFailed')
+    msgType.value = 'error'
+  } finally {
+    scanning.value = null
+  }
+}
+
 function formatDate(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleDateString()
@@ -332,6 +508,18 @@ onMounted(() => {
   font-size: 0.8rem;
 }
 .clear-filter:hover { color: var(--text-primary); }
+
+.archive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.archive-toggle input { accent-color: var(--brand); }
 
 .create-form {
   display: flex;
@@ -390,7 +578,8 @@ onMounted(() => {
 
 .dataset-list {
   display: grid;
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+  gap: 0.75rem;
 }
 
 .dataset-card {
@@ -403,32 +592,36 @@ onMounted(() => {
 .card-header {
   display: flex;
   align-items: flex-start;
-  padding: 1rem 1.25rem 0.75rem;
+  padding: 0.65rem 1rem 0.5rem;
 }
 
 .card-content {
   flex: 1;
+  min-width: 0;
 }
 
 .card-content h3 {
-  margin: 0 0 0.15rem;
+  margin: 0 0 0.1rem;
   color: var(--text-primary);
-  font-size: 1rem;
+  font-size: 0.95rem;
 }
 
 .desc {
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   color: var(--text-secondary);
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.15rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Tags */
 .tag-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.3rem;
+  gap: 0.25rem;
   align-items: center;
-  margin: 0.35rem 0;
+  margin: 0.2rem 0;
 }
 
 .tag-chip {
@@ -484,9 +677,79 @@ onMounted(() => {
 
 .meta {
   display: flex;
-  gap: 1.5rem;
-  font-size: 0.82rem;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
+  align-items: center;
+}
+
+.meta-dim {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.scan-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.68rem;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.scan-btn:hover { background: rgba(79, 195, 247, 0.08); }
+.scan-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Class name row */
+.class-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.2rem;
+  flex-wrap: wrap;
+}
+.class-label-text {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.class-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  background: var(--bg-badge);
+  font-size: 0.72rem;
+}
+.class-idx {
+  font-weight: 700;
+  color: var(--text-secondary);
+  min-width: 12px;
+  text-align: center;
+}
+.class-name-input {
+  border: none;
+  background: transparent;
+  color: var(--text-body);
+  font-size: 0.72rem;
+  padding: 0.05rem 0.2rem;
+  width: 80px;
+  outline: none;
+  border-bottom: 1px dashed transparent;
+}
+.class-name-input:focus {
+  border-bottom-color: var(--brand);
+}
+.class-name-input::placeholder {
+  color: var(--text-faint);
+  font-style: italic;
 }
 
 .unused {
@@ -496,10 +759,9 @@ onMounted(() => {
 .delete-btn {
   background: none;
   border: none;
-  font-size: 1.4rem;
   color: var(--text-faint);
   cursor: pointer;
-  padding: 0 0.5rem;
+  padding: 0.2rem 0.3rem;
   line-height: 1;
   flex-shrink: 0;
 }
@@ -508,17 +770,78 @@ onMounted(() => {
   color: var(--danger);
 }
 
+/* Card actions group */
+.card-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.archive-btn {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 0.2rem 0.3rem;
+  line-height: 1;
+}
+.archive-btn:hover { color: var(--warning); }
+
+/* Archived card style */
+.dataset-card.archived {
+  opacity: 0.55;
+  border-left: 3px solid var(--warning);
+}
+
+/* Inline editing */
+.editable-name {
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.15s;
+}
+.editable-name:hover { border-bottom-color: var(--border); }
+
+.editable-desc {
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.15s;
+}
+.editable-desc:hover { border-bottom-color: var(--border); }
+
+.edit-name-input {
+  width: 100%;
+  padding: 0.15rem 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border: 1px solid var(--brand);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  margin-bottom: 0.1rem;
+}
+
+.edit-desc-input {
+  width: 100%;
+  padding: 0.1rem 0.3rem;
+  font-size: 0.78rem;
+  border: 1px solid var(--brand);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  margin-bottom: 0.15rem;
+}
+
 /* File list within a dataset group */
 .file-list {
-  padding: 0 1.25rem;
+  padding: 0 1rem;
 }
 
 .file-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.3rem 0.5rem;
-  font-size: 0.82rem;
+  gap: 0.4rem;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.78rem;
   border-top: 1px solid var(--border-lighter);
 }
 
@@ -538,6 +861,9 @@ onMounted(() => {
 }
 
 .file-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
   background: none;
   border: 1px solid var(--border-lighter);
   color: var(--text-muted);
@@ -562,9 +888,11 @@ onMounted(() => {
 .file-del:hover { color: var(--danger); }
 
 .upload-into {
-  display: block;
-  padding: 0.5rem 1.25rem;
-  font-size: 0.78rem;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.35rem 1rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
   cursor: pointer;
   border-top: 1px solid var(--border-lighter);

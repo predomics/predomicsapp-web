@@ -40,11 +40,12 @@ export const useProjectStore = defineStore('project', () => {
     return data
   }
 
-  async function updateProject(id, { name, description } = {}) {
-    const params = {}
-    if (name !== undefined) params.name = name
-    if (description !== undefined) params.description = description
-    const { data } = await axios.patch(`/api/projects/${id}`, null, { params })
+  async function updateProject(id, { name, description, class_names } = {}) {
+    const body = {}
+    if (name !== undefined) body.name = name
+    if (description !== undefined) body.description = description
+    if (class_names !== undefined) body.class_names = class_names
+    const { data } = await axios.patch(`/api/projects/${id}`, body)
     const idx = projects.value.findIndex(p => p.project_id === id)
     if (idx >= 0) projects.value[idx] = data
     if (current.value?.project_id === id) current.value = data

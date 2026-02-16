@@ -73,7 +73,7 @@
               <td class="col-created">{{ formatDate(j.created_at) }}</td>
               <td class="col-user">{{ j.user_name || '—' }}</td>
               <td class="col-actions">
-                <button class="btn-icon btn-delete" @click.stop="confirmDeleteJob(j)" title="Delete job" :disabled="j.status === 'running'">&#10005;</button>
+                <button class="btn-icon btn-delete" @click.stop="confirmDeleteJob(j)" title="Delete job" :disabled="j.status === 'running'"><SvgIcon name="trash" :size="14" /></button>
               </td>
             </tr>
           </tbody>
@@ -852,6 +852,7 @@ import { useShapValues } from '../composables/useShapValues'
 import axios from 'axios'
 import ValidateModal from '../components/ValidateModal.vue'
 import { useI18n } from 'vue-i18n'
+import SvgIcon from '../components/SvgIcon.vue'
 // Lazy-load Plotly for better initial page load
 let Plotly = null
 async function ensurePlotly() {

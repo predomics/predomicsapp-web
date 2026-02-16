@@ -261,6 +261,44 @@ def compute_barcode_data(
     }
 
 
+def scan_dataset_metadata(
+    x_path: str,
+    y_path: str,
+    features_in_rows: bool = True,
+) -> dict[str, Any]:
+    """Lightweight metadata scan using pandas only (no Rust engine needed).
+
+    Reads file headers and y-values to extract dimensions and class info.
+    Much faster than run_filtering() since it doesn't do statistical testing.
+    """
+    from datetime import datetime, timezone
+
+    X = pd.read_csv(x_path, sep="\t", index_col=0)
+    y = pd.read_csv(y_path, sep="\t", index_col=0)
+
+    if features_in_rows:
+        feature_names = X.index.tolist()
+        sample_names = X.columns.tolist()
+    else:
+        feature_names = X.columns.tolist()
+        sample_names = X.index.tolist()
+
+    y_series = y.iloc[:, 0]
+    class_labels = sorted([str(int(c)) for c in y_series.unique()])
+    class_counts = {str(int(k)): int(v) for k, v in y_series.value_counts().items()}
+
+    return {
+        "n_features": len(feature_names),
+        "n_samples": len(sample_names),
+        "n_classes": len(class_labels),
+        "class_labels": class_labels,
+        "class_counts": class_counts,
+        "sample_names": sample_names,
+        "feature_names": feature_names,
+        "scanned_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def _mock_filtering(method: str = "wilcoxon") -> dict[str, Any]:
     """Return mock filtering results when gpredomicspy is not available."""
     import random

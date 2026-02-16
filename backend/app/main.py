@@ -891,6 +891,99 @@ async def _migrate_add_public_shares(conn):
     _log.info("Migration v18_public_shares complete")
 
 
+async def _migrate_add_project_class_names(conn):
+    """v19: Add class_names JSON column to projects."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v19_project_class_names'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+
+    _log.info("Migration v19: project class_names — starting")
+    try:
+        r = await conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'projects' AND column_name = 'class_names'"
+        ))
+        if not r.scalar():
+            await conn.execute(text(
+                "ALTER TABLE projects ADD COLUMN class_names JSON"
+            ))
+            _log.info("  Added projects.class_names column")
+    except Exception:
+        pass
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v19_project_class_names', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v19_project_class_names complete")
+
+
+async def _migrate_add_dataset_archived(conn):
+    """v20: Add archived boolean column to datasets."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v20_dataset_archived'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+
+    _log.info("Migration v20: dataset archived — starting")
+    try:
+        r = await conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'datasets' AND column_name = 'archived'"
+        ))
+        if not r.scalar():
+            await conn.execute(text(
+                "ALTER TABLE datasets ADD COLUMN archived BOOLEAN DEFAULT FALSE"
+            ))
+            _log.info("  Added datasets.archived column")
+    except Exception:
+        pass
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v20_dataset_archived', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v20_dataset_archived complete")
+
+
+async def _migrate_add_dataset_metadata(conn):
+    """v21: Add metadata JSON column to datasets."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v21_dataset_data_meta'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+
+    _log.info("Migration v21: dataset metadata — starting")
+    try:
+        r = await conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'datasets' AND column_name = 'data_meta'"
+        ))
+        if not r.scalar():
+            await conn.execute(text(
+                "ALTER TABLE datasets ADD COLUMN data_meta JSON"
+            ))
+            _log.info("  Added datasets.data_meta column")
+    except Exception:
+        pass
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v21_dataset_data_meta', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v21_dataset_data_meta complete")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown events."""
@@ -933,6 +1026,12 @@ async def lifespan(app: FastAPI):
         await _migrate_add_project_comments(conn)
     async with engine.begin() as conn:
         await _migrate_add_public_shares(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_project_class_names(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_dataset_archived(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_dataset_metadata(conn)
     _log.info("PredomicsApp started — data_dir=%s", settings.data_dir)
     yield
 

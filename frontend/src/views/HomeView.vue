@@ -26,7 +26,6 @@
       <div class="pipeline">
         <div class="pipe-step" v-for="(step, i) in pipelineSteps" :key="i">
           <div class="pipe-num">{{ i + 1 }}</div>
-          <div class="pipe-icon">{{ step.icon }}</div>
           <div class="pipe-label">{{ step.label }}</div>
           <div class="pipe-desc">{{ step.desc }}</div>
         </div>
@@ -183,52 +182,52 @@ function scrollTo(id) {
 
 // ── Data ──
 const pipelineSteps = computed(() => [
-  { icon: '\u{1F4C2}', label: t('home.steps.dataInput'), desc: t('home.steps.dataInputDesc') },
-  { icon: '\u{1F50D}', label: t('home.steps.featureSelection'), desc: t('home.steps.featureSelectionDesc') },
-  { icon: '\u{1F9EC}', label: t('home.steps.evolutionarySearch'), desc: t('home.steps.evolutionarySearchDesc') },
-  { icon: '\u{1F4CA}', label: t('home.steps.modelEvaluation'), desc: t('home.steps.modelEvaluationDesc') },
-  { icon: '\u{1F3AF}', label: t('home.steps.juryVoting'), desc: t('home.steps.juryVotingDesc') },
+  { label: t('home.steps.dataInput'), desc: t('home.steps.dataInputDesc') },
+  { label: t('home.steps.featureSelection'), desc: t('home.steps.featureSelectionDesc') },
+  { label: t('home.steps.evolutionarySearch'), desc: t('home.steps.evolutionarySearchDesc') },
+  { label: t('home.steps.modelEvaluation'), desc: t('home.steps.modelEvaluationDesc') },
+  { label: t('home.steps.juryVoting'), desc: t('home.steps.juryVotingDesc') },
 ])
 
 const featureCards = computed(() => [
-  { icon: '\u{1F4E4}', title: t('home.uploadData'), desc: t('home.uploadDataDesc') },
-  { icon: '\u{2699}\u{FE0F}', title: t('home.configureRun'), desc: t('home.configureRunDesc') },
-  { icon: '\u{1F52C}', title: t('home.exploreResults'), desc: t('home.exploreResultsDesc') },
+  { icon: '\u{21EA}', title: t('home.uploadData'), desc: t('home.uploadDataDesc') },
+  { icon: '\u{2699}', title: t('home.configureRun'), desc: t('home.configureRunDesc') },
+  { icon: '\u{2316}', title: t('home.exploreResults'), desc: t('home.exploreResultsDesc') },
 ])
 
 const capabilities = computed(() => [
-  { icon: '\u{2705}', title: t('home.externalValidation'), desc: t('home.externalValidationDesc') },
-  { icon: '\u{1F310}', title: t('home.predictionApi'), desc: t('home.predictionApiDesc') },
-  { icon: '\u{1F4C4}', title: t('home.pdfReports'), desc: t('home.pdfReportsDesc') },
-  { icon: '\u{1F4CA}', title: t('home.dashboardOverview'), desc: t('home.dashboardOverviewDesc') },
-  { icon: '\u{1F4AC}', title: t('home.projectNotes'), desc: t('home.projectNotesDesc') },
-  { icon: '\u{1F517}', title: t('home.publicSharing'), desc: t('home.publicSharingDesc') },
+  { icon: '\u{2713}', title: t('home.externalValidation'), desc: t('home.externalValidationDesc') },
+  { icon: '\u{2301}', title: t('home.predictionApi'), desc: t('home.predictionApiDesc') },
+  { icon: '\u{2261}', title: t('home.pdfReports'), desc: t('home.pdfReportsDesc') },
+  { icon: '\u{25A3}', title: t('home.dashboardOverview'), desc: t('home.dashboardOverviewDesc') },
+  { icon: '\u{2235}', title: t('home.projectNotes'), desc: t('home.projectNotesDesc') },
+  { icon: '\u{21C4}', title: t('home.publicSharing'), desc: t('home.publicSharingDesc') },
 ])
 
 const useCases = [
   {
-    icon: '\u{1FA7A}',
+    icon: '\u{2695}',
     title: 'Cirrhosis Prediction',
     description: 'Predict liver cirrhosis from gut microbiome composition using metagenomic species abundance profiles.',
     stats: { AUC: '0.94', features: 'k=8', samples: '232' },
     reference: 'Qin et al., Nature 2014',
   },
   {
-    icon: '\u{1F9EC}',
+    icon: '\u{2684}',
     title: 'Cancer Classification',
     description: 'Classify colorectal cancer status from stool metagenomic data using sparse ternary models.',
     stats: { AUC: '0.92', features: 'k=12', samples: '156' },
     reference: 'Zeller et al., Mol. Syst. Biol. 2014',
   },
   {
-    icon: '\u{1F48A}',
+    icon: '\u{2318}',
     title: 'Treatment Response',
     description: 'Predict immunotherapy response from baseline gut microbiome in melanoma patients.',
     stats: { AUC: '0.87', features: 'k=5', samples: '112' },
     reference: 'Gopalakrishnan et al., Science 2018',
   },
   {
-    icon: '\u{1F3E5}',
+    icon: '\u{2623}',
     title: 'Metabolic Disease',
     description: 'Identify type 2 diabetes biomarkers from metagenome-wide association studies.',
     stats: { AUC: '0.89', features: 'k=10', samples: '345' },
@@ -515,11 +514,6 @@ onMounted(async () => {
   justify-content: center;
   margin-bottom: 0.5rem;
   box-shadow: 0 2px 8px rgba(79, 195, 247, 0.3);
-}
-
-.pipe-icon {
-  font-size: 2rem;
-  margin-bottom: 0.4rem;
 }
 
 .pipe-label {

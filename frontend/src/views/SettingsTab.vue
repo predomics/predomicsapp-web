@@ -8,7 +8,7 @@
           <div v-for="slot in dsSlots" :key="slot.role" class="ds-slot" :class="{ ok: slot.ds, missing: !slot.ds && slot.required, optional: !slot.required && !slot.ds }">
             <span class="ds-role">{{ slot.label }}</span>
             <span v-if="slot.ds" class="ds-file">{{ slot.ds.filename }}
-              <button class="ds-clear" @click="clearSlot(slot.role)" title="Remove">&times;</button>
+              <button class="ds-clear" @click="clearSlot(slot.role)" title="Remove"><SvgIcon name="x" :size="12" /></button>
             </span>
             <template v-else>
               <select v-if="libraryDatasets.length > 0" class="ds-picker" @change="e => pickFromLibrary(e, slot.role)">
@@ -250,6 +250,7 @@ import { useI18n } from 'vue-i18n'
 import { useProjectStore } from '../stores/project'
 import { useDatasetStore } from '../stores/dataset'
 import axios from 'axios'
+import SvgIcon from '../components/SvgIcon.vue'
 
 const route = useRoute()
 const store = useProjectStore()

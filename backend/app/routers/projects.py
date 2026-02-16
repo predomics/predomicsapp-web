@@ -2,7 +2,6 @@
 
 import io
 from datetime import datetime, timezone
-from typing import Optional
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
@@ -14,7 +13,7 @@ from ..core.database import get_db
 from ..core.deps import get_current_user, get_project_with_access
 from ..models.db_models import User, Project, Dataset, DatasetFile, ProjectDataset
 from ..services import audit
-from ..models.schemas import ProjectInfo, DatasetInfo, DatasetRef, DatasetFileRef
+from ..models.schemas import ProjectInfo, ProjectUpdate, DatasetInfo, DatasetRef, DatasetFileRef
 from ..services import storage
 from .datasets import _infer_role
 
@@ -44,6 +43,7 @@ def _build_project_info(project: Project) -> ProjectInfo:
         project_id=project.id,
         name=project.name,
         description=project.description,
+        class_names=project.class_names,
         created_at=project.created_at.isoformat(),
         updated_at=project.updated_at.isoformat() if project.updated_at else None,
         datasets=datasets,
@@ -85,6 +85,7 @@ async def create_project(
         project_id=project.id,
         name=project.name,
         description=project.description,
+        class_names=project.class_names,
         created_at=project.created_at.isoformat(),
         datasets=[],
         jobs=[],
@@ -121,17 +122,18 @@ async def get_project(
 @router.patch("/{project_id}", response_model=ProjectInfo)
 async def update_project(
     project_id: str,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
+    body: ProjectUpdate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update project name and/or description (owner only)."""
+    """Update project name, description, and/or class names (owner only)."""
     project, _ = await get_project_with_access(project_id, user, db, require_role="owner")
-    if name is not None:
-        project.name = name
-    if description is not None:
-        project.description = description
+    if body.name is not None:
+        project.name = body.name
+    if body.description is not None:
+        project.description = body.description
+    if body.class_names is not None:
+        project.class_names = body.class_names
     project.updated_at = datetime.now(timezone.utc)
     return _build_project_info(project)
 

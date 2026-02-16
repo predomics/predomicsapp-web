@@ -15,6 +15,6 @@ export default i18n
  * Available locales for the language selector.
  */
 export const LOCALES = [
-  { code: 'en', label: 'EN', name: 'English' },
-  { code: 'fr', label: 'FR', name: 'Fran\u00e7ais' },
+  { code: 'en', label: 'EN', name: 'English', flag: '\uD83C\uDDEC\uD83C\uDDE7' },
+  { code: 'fr', label: 'FR', name: 'Fran\u00e7ais', flag: '\uD83C\uDDEB\uD83C\uDDF7' },
 ]

@@ -1,6 +1,7 @@
 """Dataset library endpoints — composite dataset CRUD and project assignment."""
 
 import csv
+import logging
 import statistics
 from pathlib import Path
 from typing import Optional
@@ -14,8 +15,10 @@ from ..core.database import get_db
 from ..core.deps import get_current_user
 from ..core.rate_limit import limiter
 from ..models.db_models import User, Dataset, DatasetFile, ProjectDataset, Project, DatasetVersion
-from ..models.schemas import DatasetResponse, DatasetFileRef
+from ..models.schemas import DatasetResponse, DatasetUpdate, DatasetFileRef
 from ..services import storage, audit
+
+_log = logging.getLogger(__name__)
 
 # Pre-defined tag suggestions
 SUGGESTED_TAGS = [
@@ -80,9 +83,11 @@ def _build_dataset_response(ds: Dataset) -> DatasetResponse:
         name=ds.name,
         description=ds.description,
         tags=ds.tags or [],
+        archived=ds.archived,
         files=files,
         created_at=ds.created_at.isoformat(),
         project_count=len(ds.project_links),
+        metadata=ds.data_meta,
     )
 
 
@@ -136,6 +141,7 @@ async def get_tag_suggestions(
 async def list_datasets(
     tag: Optional[str] = Query(None, description="Filter by tag"),
     search: Optional[str] = Query(None, description="Search by name"),
+    include_archived: bool = Query(False, description="Include archived datasets"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -148,6 +154,10 @@ async def list_datasets(
     )
     result = await db.execute(query)
     datasets = result.scalars().all()
+
+    # Filter out archived unless requested
+    if not include_archived:
+        datasets = [d for d in datasets if not d.archived]
 
     # Filter in Python (JSON column filtering varies by DB engine)
     if tag:
@@ -199,6 +209,150 @@ async def delete_dataset(
 
     await db.delete(dataset)
     return {"status": "deleted"}
+
+
+@router.patch("/{dataset_id}", response_model=DatasetResponse)
+async def update_dataset(
+    dataset_id: str,
+    body: DatasetUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update dataset name and/or description."""
+    result = await db.execute(
+        select(Dataset)
+        .where(Dataset.id == dataset_id, Dataset.user_id == user.id)
+        .options(selectinload(Dataset.files), selectinload(Dataset.project_links))
+    )
+    dataset = result.scalar_one_or_none()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    if body.name is not None:
+        dataset.name = body.name
+    if body.description is not None:
+        dataset.description = body.description
+    return _build_dataset_response(dataset)
+
+
+@router.post("/{dataset_id}/archive", response_model=DatasetResponse)
+async def toggle_archive(
+    dataset_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle archived status of a dataset."""
+    result = await db.execute(
+        select(Dataset)
+        .where(Dataset.id == dataset_id, Dataset.user_id == user.id)
+        .options(selectinload(Dataset.files), selectinload(Dataset.project_links))
+    )
+    dataset = result.scalar_one_or_none()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset.archived = not dataset.archived
+    return _build_dataset_response(dataset)
+
+
+# ---------------------------------------------------------------------------
+# Metadata scan
+# ---------------------------------------------------------------------------
+
+async def _try_auto_scan(db: AsyncSession, dataset: Dataset) -> None:
+    """Auto-scan dataset metadata when both xtrain and ytrain files are present."""
+    result = await db.execute(
+        select(DatasetFile).where(DatasetFile.dataset_id == dataset.id)
+    )
+    files = result.scalars().all()
+
+    x_path = y_path = None
+    for f in files:
+        if f.role == "xtrain":
+            x_path = f.disk_path
+        elif f.role == "ytrain":
+            y_path = f.disk_path
+
+    if not x_path or not y_path:
+        return
+    if not Path(x_path).exists() or not Path(y_path).exists():
+        return
+
+    try:
+        from ..services.data_analysis import scan_dataset_metadata
+        metadata = scan_dataset_metadata(x_path, y_path)
+        # Preserve user-defined class_names across rescans
+        if dataset.data_meta and "class_names" in dataset.data_meta:
+            metadata["class_names"] = dataset.data_meta["class_names"]
+        dataset.data_meta = metadata
+        await db.flush()
+    except Exception as e:
+        _log.warning("Auto-scan failed for dataset %s: %s", dataset.id, e)
+
+
+@router.post("/{dataset_id}/scan")
+async def scan_dataset(
+    dataset_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Scan dataset files and extract metadata (dimensions, classes, etc.)."""
+    result = await db.execute(
+        select(Dataset)
+        .where(Dataset.id == dataset_id, Dataset.user_id == user.id)
+        .options(selectinload(Dataset.files))
+    )
+    dataset = result.scalar_one_or_none()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    x_path = y_path = None
+    for f in dataset.files:
+        if f.role == "xtrain":
+            x_path = f.disk_path
+        elif f.role == "ytrain":
+            y_path = f.disk_path
+
+    if not x_path or not y_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Dataset must have both xtrain and ytrain files to scan.",
+        )
+    if not Path(x_path).exists() or not Path(y_path).exists():
+        raise HTTPException(status_code=404, detail="Dataset files not found on disk.")
+
+    from ..services.data_analysis import scan_dataset_metadata
+    metadata = scan_dataset_metadata(x_path, y_path)
+    # Preserve user-defined class_names across rescans
+    if dataset.data_meta and "class_names" in dataset.data_meta:
+        metadata["class_names"] = dataset.data_meta["class_names"]
+    dataset.data_meta = metadata
+    await db.flush()
+    return metadata
+
+
+@router.patch("/{dataset_id}/class-names")
+async def update_class_names(
+    dataset_id: str,
+    body: dict = Body(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update class names for a dataset. Body: {"class_names": {"0": "Healthy", "1": "Disease"}}"""
+    result = await db.execute(
+        select(Dataset).where(Dataset.id == dataset_id, Dataset.user_id == user.id)
+    )
+    dataset = result.scalar_one_or_none()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    class_names = body.get("class_names", {})
+    if dataset.data_meta is None:
+        dataset.data_meta = {"class_names": class_names}
+    else:
+        updated = dict(dataset.data_meta)
+        updated["class_names"] = class_names
+        dataset.data_meta = updated
+    await db.flush()
+    return {"class_names": class_names}
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +427,9 @@ async def upload_file(
     await audit.log_action(db, user, audit.ACTION_DATASET_UPLOAD, "dataset_file", ds_file.id,
                            details={"filename": file.filename, "dataset_id": dataset_id})
 
+    # Auto-scan metadata if xtrain + ytrain are now present
+    await _try_auto_scan(db, dataset)
+
     return DatasetFileRef(id=ds_file.id, filename=ds_file.filename, role=ds_file.role)
 
 
@@ -301,6 +458,15 @@ async def delete_file(
     storage.delete_user_dataset_file(ds_file.disk_path)
     await db.delete(ds_file)
     await db.flush()
+
+    # Invalidate cached metadata since files changed
+    ds_result = await db.execute(
+        select(Dataset).where(Dataset.id == dataset_id)
+    )
+    ds_obj = ds_result.scalar_one_or_none()
+    if ds_obj and ds_obj.data_meta:
+        ds_obj.data_meta = None
+        await db.flush()
 
     await _create_version_snapshot(db, dataset_id, user.id, note=f"Delete {filename}")
     await audit.log_action(db, user, audit.ACTION_DATASET_DELETE, "dataset_file", file_id,

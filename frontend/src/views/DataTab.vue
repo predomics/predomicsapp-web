@@ -31,7 +31,7 @@
             <div v-for="slot in dsSlots" :key="slot.role" class="ds-slot" :class="{ ok: slot.ds, missing: !slot.ds && slot.required, optional: !slot.required && !slot.ds }">
               <span class="ds-role">{{ slot.label }}</span>
               <span v-if="slot.ds" class="ds-file">{{ slot.ds.filename }}
-                <button class="ds-clear" @click="clearSlot(slot.role)" title="Remove">&times;</button>
+                <button class="ds-clear" @click="clearSlot(slot.role)" title="Remove"><SvgIcon name="x" :size="12" /></button>
               </span>
               <template v-else>
                 <select v-if="libraryDatasets.length > 0" class="ds-picker" @change="e => pickFromLibrary(e, slot.role)">
@@ -61,19 +61,27 @@
             </label>
           </div>
           <div class="form-col" v-if="summary && summary.class_labels">
-            <label>{{ $t('data.classLabels') }}
-              <div class="class-labels-row">
-                <span v-for="(cls, i) in summary.class_labels" :key="i" class="class-label-chip">
-                  <input
-                    type="text"
-                    :value="cfg.data.classes ? cfg.data.classes[i] : cls"
-                    @input="e => setClassLabel(i, e.target.value)"
-                    class="class-label-input"
-                    :placeholder="cls"
-                  />
-                </span>
+            <label>{{ $t('data.classLabels') }}</label>
+            <div class="class-labels-row">
+              <div
+                v-for="(cls, i) in summary.class_labels"
+                :key="i"
+                class="class-label-chip"
+                :class="{ target: isTargetClass(i) }"
+              >
+                <span class="class-index">{{ cls }}</span>
+                <input
+                  type="text"
+                  :value="classDisplayName(i, cls)"
+                  @input="e => setClassLabel(i, e.target.value)"
+                  @blur="saveClassNames"
+                  class="class-label-input"
+                  :placeholder="$t('data.className')"
+                />
+                <span v-if="isTargetClass(i)" class="target-badge">{{ $t('data.target') }}</span>
+                <span v-else class="ref-badge">{{ $t('data.reference') }}</span>
               </div>
-            </label>
+            </div>
           </div>
         </section>
 
@@ -165,6 +173,12 @@
 
         <!-- Abundance by class -->
         <section class="section viz-section" v-if="vizTab === 'abundance'">
+          <div class="viz-controls">
+            <label class="toggle-label">
+              <input type="checkbox" v-model="abundanceLogScale" @change="renderAbundanceChart()" />
+              Log scale
+            </label>
+          </div>
           <div ref="abundanceChartEl" class="plotly-chart plotly-chart-tall"></div>
           <p v-if="!featureStats" class="info-text">Upload datasets and run filtering to see abundance.</p>
         </section>
@@ -198,6 +212,7 @@ import { useChartTheme } from '../composables/useChartTheme'
 import axios from 'axios'
 import Plotly from 'plotly.js-dist-min'
 import { useI18n } from 'vue-i18n'
+import SvgIcon from '../components/SvgIcon.vue'
 
 const route = useRoute()
 const store = useProjectStore()
@@ -218,6 +233,7 @@ const mspAnnotations = ref({})
 const vizTab = ref('prevalence')
 
 // Top N features control — shared across all plots
+const abundanceLogScale = ref(false)
 const topN = ref(50)
 const maxTopN = computed(() => featureStats.value?.selected_count || 50)
 
@@ -367,6 +383,36 @@ function setClassLabel(index, value) {
   cfg.data.classes[index] = value
 }
 
+function classDisplayName(index, rawLabel) {
+  // Show saved name from project DB, fall back to config, fall back to raw label
+  const saved = store.current?.class_names
+  if (saved && saved[rawLabel]) return saved[rawLabel]
+  if (cfg.data.classes && cfg.data.classes[index]) return cfg.data.classes[index]
+  return ''
+}
+
+function isTargetClass(index) {
+  const labels = summary.value?.class_labels || []
+  // By default, last class (typically "1") is the target
+  // If inverse_classes is on, first class (typically "0") becomes the target
+  if (cfg.data.inverse_classes) return index === 0
+  return index === labels.length - 1
+}
+
+async function saveClassNames() {
+  if (!summary.value?.class_labels) return
+  const names = {}
+  summary.value.class_labels.forEach((cls, i) => {
+    const val = cfg.data.classes?.[i]
+    if (val && val !== cls) names[cls] = val
+  })
+  try {
+    await store.updateProject(projectId.value, { class_names: names })
+  } catch (e) {
+    console.error('Failed to save class names:', e)
+  }
+}
+
 // --- Theme colors (from shared composable) ---
 // chartColors() and chartLayout() imported from useChartTheme
 
@@ -376,6 +422,11 @@ async function loadSummary() {
   try {
     const { data } = await axios.get(`/api/data-explore/${projectId.value}/summary`)
     summary.value = data
+    // Restore saved class names into config
+    const saved = store.current?.class_names
+    if (saved && data.class_labels) {
+      cfg.data.classes = data.class_labels.map(cls => saved[cls] || cls)
+    }
   } catch { summary.value = null }
 }
 
@@ -582,8 +633,13 @@ async function renderAbundanceChart() {
     const hoverX = [], hoverY = [], hoverText = []
 
     for (let i = 0; i < nFeat; i++) {
-      const stats = features[i].classes[cls]
-      if (!stats) continue
+      const rawStats = features[i].classes[cls]
+      if (!rawStats) continue
+      // Replace zeros with a value slightly below the mean for log scale
+      const logFloor = (rawStats.mean || 1e-6) / 10
+      const stats = abundanceLogScale.value
+        ? { ...rawStats, min: rawStats.min || logFloor, q1: rawStats.q1 || logFloor, median: rawStats.median || logFloor, q3: rawStats.q3 || logFloor, max: rawStats.max || logFloor }
+        : rawStats
       const yC = i + offsets[ci]
 
       // IQR box
@@ -660,7 +716,11 @@ async function renderAbundanceChart() {
   }
 
   Plotly.newPlot(abundanceChartEl.value, traces, chartLayout({
-    xaxis: { title: { text: 'Abundance', font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+    xaxis: {
+      title: { text: abundanceLogScale.value ? 'Abundance (log)' : 'Abundance', font: { color: c.text } },
+      type: abundanceLogScale.value ? 'log' : 'linear',
+      gridcolor: c.grid, color: c.text,
+    },
     yaxis: {
       tickvals: features.map((_, i) => i), ticktext: features.map(f => featureLabel(f.name)),
       range: [nFeat - 0.5, -0.5], automargin: true, color: c.text, fixedrange: true,
@@ -699,7 +759,8 @@ async function renderBarcodeChart() {
   const span = hi - floor
   const whiteEnd = Math.max(0.01, (lo - floor) / span)
   const dataColors = ['#00bfff', '#0000ff', '#00cd00', '#ffff00', '#ffa500', '#ff0000', '#ee4000', '#8b0000']
-  const colorscale = [[0, '#ffffff'], [whiteEnd, '#ffffff']]
+  const zeroBg = c.paper  // transparent-like: match plot background so zeros fade away
+  const colorscale = [[0, zeroBg], [whiteEnd, zeroBg]]
   for (let i = 0; i < dataColors.length; i++) {
     colorscale.push([whiteEnd + (1 - whiteEnd) * (i + 1) / dataColors.length, dataColors[i]])
   }
@@ -893,7 +954,14 @@ watch(topN, () => {
 // Watch for dataset changes (after upload/assign)
 watch(hasTrainData, (val) => { if (val) loadAll() })
 
-onMounted(() => { if (hasTrainData.value) loadAll() })
+onMounted(() => {
+  if (hasTrainData.value) loadAll()
+  // Restore class names from project DB into config
+  const saved = store.current?.class_names
+  if (saved && summary.value?.class_labels) {
+    cfg.data.classes = summary.value.class_labels.map(cls => saved[cls] || cls)
+  }
+})
 </script>
 
 <style scoped>
@@ -1172,21 +1240,55 @@ input[type="checkbox"] {
 /* Class label inputs */
 .class-labels-row {
   display: flex;
-  gap: 0.3rem;
+  gap: 0.5rem;
   flex-wrap: wrap;
+  margin-top: 0.3rem;
 }
 .class-label-chip {
   display: flex;
   align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  transition: border-color 0.2s;
+}
+.class-label-chip.target {
+  border-color: var(--brand);
+  background: var(--info-bg);
+}
+.class-index {
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  min-width: 1.2em;
+  text-align: center;
 }
 .class-label-input {
-  width: 80px;
+  width: 100px;
   padding: 0.2rem 0.35rem;
   font-size: 0.75rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-light);
   border-radius: 4px;
   background: var(--bg-input);
   color: var(--text-body);
+}
+.target-badge, .ref-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+}
+.target-badge {
+  background: var(--brand);
+  color: var(--accent-text);
+}
+.ref-badge {
+  background: var(--bg-badge);
+  color: var(--text-muted);
 }
 
 /* Viz header with tabs + top-N control */
@@ -1213,6 +1315,27 @@ input[type="checkbox"] {
   padding: 0.2rem 0.3rem;
   font-size: 0.78rem;
   text-align: center;
+}
+
+.viz-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-label input[type="checkbox"] {
+  accent-color: var(--brand);
 }
 
 /* Viz tabs */

@@ -13,8 +13,9 @@
         <router-link v-if="auth.isLoggedIn && auth.isAdmin" to="/admin">{{ $t('nav.admin') }}</router-link>
       </div>
       <div class="nav-right">
-        <button class="lang-btn" @click="toggleLocale" :title="currentLocale">
-          {{ currentLocale.toUpperCase() }}
+        <button class="lang-btn" @click="toggleLocale" :title="currentLocaleInfo.name">
+          <span class="lang-flag">{{ currentLocaleInfo.flag }}</span>
+          <span class="lang-code">{{ currentLocaleInfo.label }}</span>
         </button>
         <button class="theme-btn" @click="theme.cycle()" :title="`Theme: ${theme.mode}`">
           <span v-if="theme.mode === 'light'">&#9788;</span>
@@ -52,6 +53,7 @@ const router = useRouter()
 const { locale } = useI18n()
 
 const currentLocale = computed(() => locale.value)
+const currentLocaleInfo = computed(() => LOCALES.find(l => l.code === locale.value) || LOCALES[0])
 
 function toggleLocale() {
   const codes = LOCALES.map(l => l.code)
@@ -317,6 +319,9 @@ body {
 }
 
 .lang-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
   background: transparent;
   border: 1px solid rgba(255,255,255,0.15);
   color: var(--text-nav-link);
@@ -328,6 +333,17 @@ body {
   line-height: 1;
   transition: all 0.2s;
   letter-spacing: 0.5px;
+  min-width: 52px;
+  justify-content: center;
+}
+
+.lang-flag {
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.lang-code {
+  font-size: 0.7rem;
 }
 
 .lang-btn:hover {
