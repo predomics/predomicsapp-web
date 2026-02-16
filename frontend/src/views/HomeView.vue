@@ -43,6 +43,18 @@
       </div>
     </div>
 
+    <!-- Platform capabilities -->
+    <section class="capabilities">
+      <h2>Full Analysis Platform</h2>
+      <div class="cap-grid">
+        <div class="cap-item" v-for="cap in capabilities" :key="cap.title">
+          <div class="cap-icon">{{ cap.icon }}</div>
+          <h3>{{ cap.title }}</h3>
+          <p>{{ cap.desc }}</p>
+        </div>
+      </div>
+    </section>
+
     <!-- Use Case Examples -->
     <section class="use-cases">
       <h2>Real-World Use Cases</h2>
@@ -81,6 +93,61 @@
           <div class="tech-val">GPU</div>
           <div class="tech-label">Acceleration</div>
         </div>
+        <div class="tech-item">
+          <div class="tech-val">50+</div>
+          <div class="tech-label">API Endpoints</div>
+        </div>
+        <div class="tech-item">
+          <div class="tech-val">274</div>
+          <div class="tech-label">Tests</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Technology Stack -->
+    <section class="stack">
+      <h2>Modern Technology Stack</h2>
+      <div class="stack-grid">
+        <div class="stack-group">
+          <h4>Frontend</h4>
+          <div class="stack-tags">
+            <span class="stack-tag">Vue 3</span>
+            <span class="stack-tag">Pinia</span>
+            <span class="stack-tag">Vue Router</span>
+            <span class="stack-tag">Plotly.js</span>
+            <span class="stack-tag">Vite</span>
+          </div>
+        </div>
+        <div class="stack-group">
+          <h4>Backend</h4>
+          <div class="stack-tags">
+            <span class="stack-tag">FastAPI</span>
+            <span class="stack-tag">SQLAlchemy</span>
+            <span class="stack-tag">Pydantic</span>
+            <span class="stack-tag">WebSocket</span>
+            <span class="stack-tag">reportlab</span>
+          </div>
+        </div>
+        <div class="stack-group">
+          <h4>ML Engine</h4>
+          <div class="stack-tags">
+            <span class="stack-tag accent">Rust</span>
+            <span class="stack-tag accent">gpredomicspy</span>
+            <span class="stack-tag">GPU (CUDA)</span>
+            <span class="stack-tag">NumPy</span>
+            <span class="stack-tag">pandas</span>
+          </div>
+        </div>
+        <div class="stack-group">
+          <h4>Infrastructure</h4>
+          <div class="stack-tags">
+            <span class="stack-tag">Docker</span>
+            <span class="stack-tag">PostgreSQL</span>
+            <span class="stack-tag">NGINX</span>
+            <span class="stack-tag">JWT + API Keys</span>
+            <span class="stack-tag">pytest + Vitest</span>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -104,6 +171,15 @@ const pipelineSteps = [
   { icon: '\u{1F9EC}', label: 'Evolutionary Search', desc: 'GA / Beam / MCMC' },
   { icon: '\u{1F4CA}', label: 'Model Evaluation', desc: 'AUC, sensitivity, specificity' },
   { icon: '\u{1F3AF}', label: 'Jury Voting', desc: 'Ensemble consensus' },
+]
+
+const capabilities = [
+  { icon: '\u{2705}', title: 'External Validation', desc: 'Score new samples against trained models. Upload an independent cohort and get AUC, accuracy, and per-sample predictions.' },
+  { icon: '\u{1F310}', title: 'Prediction API', desc: 'Deploy models as JSON endpoints. Send feature data via curl or code and receive class predictions in real time.' },
+  { icon: '\u{1F4C4}', title: 'PDF Reports', desc: 'Download publication-ready biomarker reports with performance metrics, feature tables, and configuration summaries.' },
+  { icon: '\u{1F4CA}', title: 'Dashboard', desc: 'Global overview with running jobs, recent completions, dataset counts, and activity feed across all your projects.' },
+  { icon: '\u{1F4AC}', title: 'Project Notes', desc: 'Threaded discussion per project. Add notes, track decisions, and collaborate with your team.' },
+  { icon: '\u{1F517}', title: 'Public Sharing', desc: 'Generate read-only links to share results with anyone — no login required. Set expiry or revoke anytime.' },
 ]
 
 const useCases = [
@@ -278,6 +354,49 @@ onMounted(async () => {
   line-height: 1.5;
 }
 
+/* Platform Capabilities */
+.capabilities {
+  margin: 3rem 0;
+}
+.capabilities h2 {
+  color: var(--text-primary);
+  margin-bottom: 1.5rem;
+  font-size: 1.3rem;
+}
+
+.cap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+  text-align: left;
+}
+
+.cap-item {
+  background: var(--bg-card);
+  padding: 1.25rem 1.5rem;
+  border-radius: 10px;
+  box-shadow: var(--card-shadow);
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+.cap-item:hover {
+  box-shadow: var(--card-shadow-hover);
+  transform: translateY(-2px);
+}
+.cap-icon {
+  font-size: 1.6rem;
+  margin-bottom: 0.4rem;
+}
+.cap-item h3 {
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  margin-bottom: 0.25rem;
+}
+.cap-item p {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
 /* Use Cases */
 .use-cases {
   margin: 3rem 0;
@@ -374,6 +493,56 @@ onMounted(async () => {
   font-size: 0.78rem;
   color: var(--text-muted);
   margin-top: 0.2rem;
+}
+
+/* Technology Stack */
+.stack {
+  margin: 3rem 0 2rem;
+}
+.stack h2 {
+  color: var(--text-primary);
+  margin-bottom: 1.5rem;
+  font-size: 1.3rem;
+}
+.stack-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.25rem;
+  text-align: left;
+}
+.stack-group {
+  background: var(--bg-card);
+  padding: 1rem 1.25rem;
+  border-radius: 10px;
+  box-shadow: var(--card-shadow);
+}
+.stack-group h4 {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.6rem;
+}
+.stack-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.stack-tag {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: var(--bg-badge);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-light);
+}
+.stack-tag.accent {
+  background: var(--info-bg);
+  color: var(--info);
+  border-color: transparent;
+  font-weight: 600;
 }
 
 .status {
