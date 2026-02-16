@@ -157,6 +157,7 @@
             <button :class="{ active: vizTab === 'abundance' }" @click="vizTab = 'abundance'">{{ $t('data.abundance') }}</button>
             <button :class="{ active: vizTab === 'barcode' }" @click="vizTab = 'barcode'">{{ $t('data.barcode') }}</button>
             <button :class="{ active: vizTab === 'volcano' }" @click="vizTab = 'volcano'">{{ $t('data.volcano') }}</button>
+            <button :class="{ active: vizTab === 'pcoa' }" @click="vizTab = 'pcoa'">{{ $t('data.pcoa') }}</button>
           </nav>
           <label class="topn-control" v-if="featureStats">
             {{ $t('data.top') }}
@@ -193,6 +194,53 @@
         <section class="section viz-section" v-if="vizTab === 'volcano'">
           <div ref="volcanoChartEl" class="plotly-chart plotly-chart-tall"></div>
           <p v-if="!featureStats" class="info-text">Upload datasets and run filtering to see the volcano plot.</p>
+        </section>
+
+        <!-- PCoA -->
+        <section class="section viz-section" v-if="vizTab === 'pcoa'">
+          <div class="pcoa-controls">
+            <label class="pcoa-control-item">
+              <span>{{ $t('data.pcoaMetric') }}</span>
+              <select v-model="pcoaMetric" @change="loadPcoa">
+                <option value="braycurtis">Bray-Curtis</option>
+                <option value="euclidean">{{ $t('data.euclidean') }}</option>
+                <option value="jaccard">Jaccard</option>
+                <option value="cosine">{{ $t('data.cosine') }}</option>
+              </select>
+            </label>
+            <label class="pcoa-control-item">
+              <span>{{ $t('data.pcoaFeatures') }}</span>
+              <select v-model="pcoaFbmJobId" @change="onFbmJobChange">
+                <option value="">{{ $t('data.allFeatures') }}</option>
+                <option v-for="j in pcoaJobs" :key="j.id" :value="j.id">{{ j.label }}</option>
+              </select>
+            </label>
+            <label class="toggle-label">
+              <input type="checkbox" v-model="pcoaShowEllipses" @change="renderPcoaChart" />
+              {{ $t('data.ellipses') }}
+            </label>
+            <div class="pcoa-dim-toggle">
+              <button :class="{ active: pcoaDim === '2d' }" @click="pcoaDim = '2d'">2D</button>
+              <button :class="{ active: pcoaDim === '3d' }" @click="pcoaDim = '3d'">3D</button>
+            </div>
+          </div>
+          <div v-if="pcoaData" class="pcoa-stats-row">
+            <span class="pcoa-info">
+              {{ pcoaData.n_samples }} {{ $t('data.samples').toLowerCase() }}
+              &middot; {{ pcoaData.n_features_used }} {{ $t('data.features').toLowerCase() }}
+              &middot; {{ pcoaData.metric }}
+            </span>
+            <span v-if="pcoaData.permanova" class="pcoa-permanova" :class="{ significant: pcoaData.permanova.p_value < 0.05 }">
+              PERMANOVA: F={{ pcoaData.permanova.F }}, R&sup2;={{ pcoaData.permanova.R2 }},
+              p={{ pcoaData.permanova.p_value < 0.001 ? '< 0.001' : pcoaData.permanova.p_value }}
+              <span v-if="pcoaData.permanova.p_value < 0.001" class="sig-star">***</span>
+              <span v-else-if="pcoaData.permanova.p_value < 0.01" class="sig-star">**</span>
+              <span v-else-if="pcoaData.permanova.p_value < 0.05" class="sig-star">*</span>
+            </span>
+          </div>
+          <div ref="pcoaChartEl" class="plotly-chart plotly-chart-pcoa"></div>
+          <div v-if="loadingPcoa" class="loading">{{ $t('data.loadingPcoa') }}</div>
+          <p v-if="!hasTrainData && !loadingPcoa" class="info-text">Upload datasets to compute PCoA.</p>
         </section>
       </main>
     </div>
@@ -231,6 +279,14 @@ const abundanceData = ref([])
 const barcodeData = ref(null)
 const mspAnnotations = ref({})
 const vizTab = ref('prevalence')
+const pcoaData = ref(null)
+const loadingPcoa = ref(false)
+const pcoaMetric = ref('braycurtis')
+const pcoaDim = ref('2d')
+const pcoaShowEllipses = ref(true)
+const pcoaFbmJobId = ref('')
+const pcoaJobs = ref([])
+const pcoaFbmFeatures = ref([])
 
 // Top N features control — shared across all plots
 const abundanceLogScale = ref(false)
@@ -259,6 +315,7 @@ const prevalenceChartEl = ref(null)
 const abundanceChartEl = ref(null)
 const barcodeChartEl = ref(null)
 const volcanoChartEl = ref(null)
+const pcoaChartEl = ref(null)
 
 const projectId = computed(() => route.params.id)
 
@@ -490,6 +547,70 @@ async function loadBarcodeData() {
     barcodeData.value = data
   } catch (e) {
     console.error('Failed to load barcode data:', e)
+  }
+}
+
+async function loadPcoaJobs() {
+  try {
+    const { data } = await axios.get(`/api/analysis/${projectId.value}/jobs`)
+    pcoaJobs.value = (data || [])
+      .filter(j => j.status === 'completed')
+      .map(j => ({ id: j.job_id, label: j.name || `Job ${j.job_id.slice(0, 8)}` }))
+  } catch { pcoaJobs.value = [] }
+}
+
+async function onFbmJobChange() {
+  if (!pcoaFbmJobId.value) {
+    pcoaFbmFeatures.value = []
+    loadPcoa()
+    return
+  }
+  try {
+    const { data } = await axios.get(`/api/analysis/${projectId.value}/jobs/${pcoaFbmJobId.value}/results`)
+    const pop = data?.population || []
+    // FBM filter: models within 95% CI of best fit
+    const bestFit = pop[0]?.metrics?.fit
+    if (bestFit == null) { pcoaFbmFeatures.value = []; loadPcoa(); return }
+    const n = data?.sample_count || pop.length
+    const se = Math.sqrt(bestFit * (1 - bestFit) / n)
+    const threshold = bestFit - 1.96 * se
+    const fbm = pop.filter(ind => ind.metrics?.fit >= threshold)
+    // Collect unique feature names across all FBM models
+    const nameSet = new Set()
+    for (const ind of fbm) {
+      if (ind.named_features) {
+        Object.keys(ind.named_features).forEach(f => nameSet.add(f))
+      }
+    }
+    pcoaFbmFeatures.value = [...nameSet]
+    loadPcoa()
+  } catch (e) {
+    console.error('Failed to load FBM features:', e)
+    pcoaFbmFeatures.value = []
+    loadPcoa()
+  }
+}
+
+async function loadPcoa() {
+  if (!hasTrainData.value) return
+  loadingPcoa.value = true
+  try {
+    const params = { metric: pcoaMetric.value }
+    if (pcoaFbmFeatures.value.length > 0) {
+      params.features = pcoaFbmFeatures.value.join(',')
+    }
+    const { data } = await axios.get(`/api/data-explore/${projectId.value}/pcoa`, { params })
+    pcoaData.value = data
+    await nextTick()
+    renderPcoaChart()
+  } catch (e) {
+    if (e.response?.status === 404) {
+      pcoaData.value = null
+    } else {
+      console.error('Failed to load PCoA:', e)
+    }
+  } finally {
+    loadingPcoa.value = false
   }
 }
 
@@ -926,11 +1047,96 @@ async function renderVolcanoChart() {
   }), { responsive: true, displayModeBar: false })
 }
 
+async function renderPcoaChart() {
+  await nextTick()
+  if (!pcoaChartEl.value || !pcoaData.value) return
+  const c = chartColors()
+  const d = pcoaData.value
+  const ve = d.variance_explained
+
+  const palette = [c.class0, c.class1, c.accent, c.danger]
+  const classColorMap = {}
+  d.class_labels.forEach((lbl, i) => { classColorMap[lbl] = palette[i % palette.length] })
+
+  if (pcoaDim.value === '3d') {
+    const traces = d.class_labels.map(cls => {
+      const mask = d.sample_classes.map((sc, i) => String(sc) === cls ? i : -1).filter(i => i >= 0)
+      return {
+        x: mask.map(i => d.coords[i][0]),
+        y: mask.map(i => d.coords[i][1]),
+        z: mask.map(i => d.coords[i][2]),
+        text: mask.map(i => d.sample_names[i]),
+        mode: 'markers',
+        type: 'scatter3d',
+        name: `Class ${cls}`,
+        marker: { color: classColorMap[cls], size: 4, opacity: 0.85 },
+        hovertemplate: '%{text}<br>PCo1: %{x:.3f}<br>PCo2: %{y:.3f}<br>PCo3: %{z:.3f}<extra></extra>',
+      }
+    })
+
+    Plotly.newPlot(pcoaChartEl.value, traces, {
+      ...chartLayout({ height: 550 }),
+      scene: {
+        xaxis: { title: { text: `PCo1 (${ve[0]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        yaxis: { title: { text: `PCo2 (${ve[1]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        zaxis: { title: { text: `PCo3 (${ve[2]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        bgcolor: c.paper,
+      },
+      legend: { orientation: 'h', y: -0.05, font: { color: c.text } },
+    }, { responsive: true, displayModeBar: true })
+  } else {
+    const traces = d.class_labels.map(cls => {
+      const mask = d.sample_classes.map((sc, i) => String(sc) === cls ? i : -1).filter(i => i >= 0)
+      return {
+        x: mask.map(i => d.coords[i][0]),
+        y: mask.map(i => d.coords[i][1]),
+        text: mask.map(i => d.sample_names[i]),
+        mode: 'markers',
+        type: 'scatter',
+        name: `Class ${cls}`,
+        marker: { color: classColorMap[cls], size: 7, opacity: 0.8, line: { color: classColorMap[cls], width: 0.5 } },
+        hovertemplate: '%{text}<br>PCo1: %{x:.3f}<br>PCo2: %{y:.3f}<extra></extra>',
+      }
+    })
+
+    // Add confidence ellipses as scatter traces (filled closed curves)
+    if (pcoaShowEllipses.value && d.ellipses) {
+      for (const cls of d.class_labels) {
+        const ell = d.ellipses[cls]
+        if (!ell) continue
+        traces.push({
+          x: ell.x,
+          y: ell.y,
+          mode: 'lines',
+          type: 'scatter',
+          name: `95% CI – Class ${cls}`,
+          line: { color: classColorMap[cls], width: 2, dash: 'dash' },
+          fill: 'toself',
+          fillcolor: classColorMap[cls] + '18',
+          hoverinfo: 'skip',
+          showlegend: false,
+        })
+      }
+    }
+
+    Plotly.newPlot(pcoaChartEl.value, traces, chartLayout({
+      xaxis: { title: { text: `PCo1 (${ve[0]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
+      yaxis: { title: { text: `PCo2 (${ve[1]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
+      legend: { orientation: 'h', y: 1.12, font: { color: c.text } },
+      height: 500,
+    }), { responsive: true, displayModeBar: false })
+  }
+}
+
 function renderCurrentViz() {
   if (vizTab.value === 'prevalence') renderPrevalenceChart()
   else if (vizTab.value === 'abundance') renderAbundanceChart()
   else if (vizTab.value === 'barcode') renderBarcodeChart()
   else if (vizTab.value === 'volcano') renderVolcanoChart()
+  else if (vizTab.value === 'pcoa') {
+    if (!pcoaData.value && !loadingPcoa.value) loadPcoa()
+    else renderPcoaChart()
+  }
 }
 
 // Watchers for chart rendering
@@ -951,11 +1157,17 @@ watch(topN, () => {
   }, 300)
 })
 
+// Re-render PCoA when switching 2D/3D
+watch(pcoaDim, () => {
+  if (pcoaData.value) renderPcoaChart()
+})
+
 // Watch for dataset changes (after upload/assign)
 watch(hasTrainData, (val) => { if (val) loadAll() })
 
 onMounted(() => {
   if (hasTrainData.value) loadAll()
+  loadPcoaJobs()
   // Restore class names from project DB into config
   const saved = store.current?.class_names
   if (saved && summary.value?.class_labels) {
@@ -1369,6 +1581,57 @@ input[type="checkbox"] {
 
 .info-text { color: var(--text-faint); font-size: 0.82rem; font-style: italic; text-align: center; padding: 2rem 0; }
 .loading { text-align: center; padding: 2rem; color: var(--text-faint); }
+
+/* PCoA */
+.pcoa-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+.pcoa-control-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.pcoa-control-item select {
+  min-width: 120px;
+}
+.pcoa-dim-toggle {
+  display: flex;
+}
+.pcoa-dim-toggle button {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-body);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.pcoa-dim-toggle button:first-child { border-radius: 4px 0 0 4px; }
+.pcoa-dim-toggle button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
+.pcoa-dim-toggle button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.pcoa-stats-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.pcoa-info { font-size: 0.78rem; color: var(--text-faint); }
+.pcoa-permanova {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  background: var(--bg-badge);
+  padding: 0.2rem 0.6rem;
+  border-radius: 6px;
+  font-family: monospace;
+}
+.pcoa-permanova.significant { color: var(--success-dark); background: var(--success-bg-alt); }
+.sig-star { color: var(--danger); font-weight: 700; margin-left: 0.2rem; }
+.plotly-chart-pcoa { min-height: 500px; }
 
 @media (max-width: 1000px) {
   .data-panels { grid-template-columns: 1fr; }

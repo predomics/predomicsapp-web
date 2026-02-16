@@ -5,6 +5,7 @@
       <button :class="{ active: subTab === 'summary' }" @click="subTab = 'summary'">{{ $t('dataExplore.summary') }}</button>
       <button :class="{ active: subTab === 'features' }" @click="subTab = 'features'">{{ $t('dataExplore.features') }}</button>
       <button :class="{ active: subTab === 'visualizations' }" @click="subTab = 'visualizations'">{{ $t('dataExplore.visualizations') }}</button>
+      <button :class="{ active: subTab === 'pcoa' }" @click="subTab = 'pcoa'">{{ $t('dataExplore.pcoa') }}</button>
     </nav>
 
     <!-- ====== SUMMARY SUB-TAB ====== -->
@@ -162,6 +163,42 @@
       </div>
     </div>
 
+    <!-- ====== PCoA SUB-TAB ====== -->
+    <div v-if="subTab === 'pcoa'" class="sub-content">
+      <div class="pcoa-controls">
+        <label class="filter-item">
+          <span>{{ $t('dataExplore.pcoaMetric') }}</span>
+          <select v-model="pcoaMetric" @change="loadPcoa">
+            <option value="braycurtis">Bray-Curtis</option>
+            <option value="euclidean">{{ $t('dataExplore.euclidean') }}</option>
+            <option value="jaccard">Jaccard</option>
+            <option value="cosine">{{ $t('dataExplore.cosine') }}</option>
+          </select>
+        </label>
+        <label class="filter-item pcoa-dim-toggle">
+          <span>{{ $t('dataExplore.pcoaDimensions') }}</span>
+          <div class="dim-buttons">
+            <button :class="{ active: pcoaDim === '2d' }" @click="pcoaDim = '2d'">2D</button>
+            <button :class="{ active: pcoaDim === '3d' }" @click="pcoaDim = '3d'">3D</button>
+          </div>
+        </label>
+      </div>
+
+      <section class="section" v-if="pcoaData">
+        <h3>{{ $t('dataExplore.pcoaTitle') }}</h3>
+        <p class="pcoa-info">
+          {{ pcoaData.n_samples }} {{ $t('dataExplore.samples').toLowerCase() }}
+          &middot; {{ $t('dataExplore.pcoaMetric') }}: {{ pcoaData.metric }}
+        </p>
+        <div ref="pcoaChartEl" class="plotly-chart plotly-chart-pcoa"></div>
+      </section>
+
+      <div v-if="loadingPcoa" class="loading">{{ $t('dataExplore.loadingPcoa') }}</div>
+      <div v-if="!pcoaData && !loadingPcoa && !loading" class="empty">
+        {{ $t('dataExplore.noTrainingData') }}
+      </div>
+    </div>
+
     <!-- Global loading -->
     <div v-if="loading && !featureStats" class="loading">{{ $t('dataExplore.loadingExplore') }}</div>
   </div>
@@ -189,6 +226,10 @@ const summary = ref(null)
 const featureStats = ref(null)
 const distributions = ref(null)
 const abundanceData = ref([])
+const pcoaData = ref(null)
+const loadingPcoa = ref(false)
+const pcoaMetric = ref('braycurtis')
+const pcoaDim = ref('2d')
 
 // Filter controls
 const filterMethod = ref('wilcoxon')
@@ -209,6 +250,7 @@ const prevHistChartEl = ref(null)
 const sdHistChartEl = ref(null)
 const volcanoChartEl = ref(null)
 const abundanceChartEl = ref(null)
+const pcoaChartEl = ref(null)
 
 const projectId = computed(() => route.params.id)
 
@@ -349,6 +391,27 @@ async function loadAll() {
     await Promise.all([loadSummary(), loadFeatureStats(), loadDistributions()])
   } finally {
     loading.value = false
+  }
+}
+
+// --- PCoA ---
+async function loadPcoa() {
+  loadingPcoa.value = true
+  try {
+    const { data } = await axios.get(`/api/data-explore/${projectId.value}/pcoa`, {
+      params: { metric: pcoaMetric.value },
+    })
+    pcoaData.value = data
+    await nextTick()
+    renderPcoaChart()
+  } catch (e) {
+    if (e.response?.status === 404) {
+      pcoaData.value = null
+    } else {
+      console.error('Failed to load PCoA:', e)
+    }
+  } finally {
+    loadingPcoa.value = false
   }
 }
 
@@ -534,6 +597,69 @@ async function renderAbundanceChart() {
   }), { responsive: true, displayModeBar: false })
 }
 
+async function renderPcoaChart() {
+  await nextTick()
+  if (!pcoaChartEl.value || !pcoaData.value) return
+  const c = chartColors()
+  const d = pcoaData.value
+  const ve = d.variance_explained
+
+  const classColorMap = {}
+  const palette = [c.class0, c.class1, c.accent, c.danger]
+  d.class_labels.forEach((lbl, i) => { classColorMap[lbl] = palette[i % palette.length] })
+
+  if (pcoaDim.value === '3d') {
+    // 3D scatter plot
+    const traces = d.class_labels.map(cls => {
+      const mask = d.sample_classes.map((sc, i) => String(sc) === cls ? i : -1).filter(i => i >= 0)
+      return {
+        x: mask.map(i => d.coords[i][0]),
+        y: mask.map(i => d.coords[i][1]),
+        z: mask.map(i => d.coords[i][2]),
+        text: mask.map(i => d.sample_names[i]),
+        mode: 'markers',
+        type: 'scatter3d',
+        name: `${t('dataExplore.class')} ${cls}`,
+        marker: { color: classColorMap[cls], size: 4, opacity: 0.85 },
+        hovertemplate: '%{text}<br>PCo1: %{x:.3f}<br>PCo2: %{y:.3f}<br>PCo3: %{z:.3f}<extra></extra>',
+      }
+    })
+
+    Plotly.newPlot(pcoaChartEl.value, traces, {
+      ...chartLayout({ height: 550 }),
+      scene: {
+        xaxis: { title: { text: `PCo1 (${ve[0]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        yaxis: { title: { text: `PCo2 (${ve[1]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        zaxis: { title: { text: `PCo3 (${ve[2]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        bgcolor: c.paper,
+      },
+      legend: { orientation: 'h', y: -0.05, font: { color: c.text } },
+    }, { responsive: true, displayModeBar: true })
+  } else {
+    // 2D scatter plot
+    const traces = d.class_labels.map(cls => {
+      const mask = d.sample_classes.map((sc, i) => String(sc) === cls ? i : -1).filter(i => i >= 0)
+      return {
+        x: mask.map(i => d.coords[i][0]),
+        y: mask.map(i => d.coords[i][1]),
+        text: mask.map(i => d.sample_names[i]),
+        mode: 'markers',
+        type: 'scatter',
+        name: `${t('dataExplore.class')} ${cls}`,
+        marker: { color: classColorMap[cls], size: 7, opacity: 0.8, line: { color: classColorMap[cls], width: 0.5 } },
+        hovertemplate: '%{text}<br>PCo1: %{x:.3f}<br>PCo2: %{y:.3f}<extra></extra>',
+      }
+    })
+
+    Plotly.newPlot(pcoaChartEl.value, traces, chartLayout({
+      xaxis: { title: { text: `PCo1 (${ve[0]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
+      yaxis: { title: { text: `PCo2 (${ve[1]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
+      legend: { orientation: 'h', y: 1.12, font: { color: c.text } },
+      height: 500,
+    }), { responsive: true, displayModeBar: false })
+  }
+}
+
 // Re-render charts when sub-tab changes, data loads, or theme toggles
 watch([subTab, summary, () => themeStore.isDark], () => {
   if (subTab.value === 'summary' && summary.value) {
@@ -558,6 +684,22 @@ watch([subTab, featureStats, () => themeStore.isDark], () => {
 watch(selectedFeatures, () => {
   if (selectedFeatures.value.length > 0) loadAbundance()
 }, { deep: true })
+
+// Load PCoA when tab activated (lazy load)
+watch([subTab, () => themeStore.isDark], () => {
+  if (subTab.value === 'pcoa') {
+    if (!pcoaData.value && !loadingPcoa.value) {
+      loadPcoa()
+    } else if (pcoaData.value) {
+      renderPcoaChart()
+    }
+  }
+})
+
+// Re-render when switching 2D/3D
+watch(pcoaDim, () => {
+  if (pcoaData.value) renderPcoaChart()
+})
 
 onMounted(loadAll)
 </script>
@@ -813,5 +955,57 @@ onMounted(loadAll)
   text-align: center;
   padding: 2rem;
   color: var(--text-faint);
+}
+
+/* PCoA */
+.pcoa-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  align-items: flex-end;
+  margin-bottom: 1rem;
+  padding: 1rem 1.25rem;
+  background: var(--bg-card);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.pcoa-dim-toggle .dim-buttons {
+  display: flex;
+  gap: 0;
+}
+
+.pcoa-dim-toggle .dim-buttons button {
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-body);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.pcoa-dim-toggle .dim-buttons button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.pcoa-dim-toggle .dim-buttons button:last-child {
+  border-radius: 0 4px 4px 0;
+  border-left: none;
+}
+
+.pcoa-dim-toggle .dim-buttons button.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.pcoa-info {
+  font-size: 0.82rem;
+  color: var(--text-faint);
+  margin-bottom: 0.75rem;
+}
+
+.plotly-chart-pcoa {
+  min-height: 500px;
 }
 </style>

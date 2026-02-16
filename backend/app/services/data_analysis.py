@@ -261,6 +261,241 @@ def compute_barcode_data(
     }
 
 
+def compute_pcoa(
+    x_path: str,
+    y_path: str,
+    features_in_rows: bool = True,
+    metric: str = "braycurtis",
+    max_samples: int = 1000,
+    feature_names: list[str] | None = None,
+    n_permutations: int = 999,
+) -> dict[str, Any]:
+    """Compute PCoA with confidence ellipses and PERMANOVA.
+
+    Uses scipy distance matrix + classical multidimensional scaling (eigendecomposition).
+    Returns principal coordinates, sample metadata, % variance explained,
+    per-class confidence ellipses, and PERMANOVA test results.
+
+    If feature_names is provided, only those features are used (FBM filtering).
+    """
+    from scipy.spatial.distance import pdist, squareform
+
+    X = pd.read_csv(x_path, sep="\t", index_col=0)
+    y = pd.read_csv(y_path, sep="\t", index_col=0)
+
+    if features_in_rows:
+        X = X.T  # rows=samples, cols=features
+
+    # Filter to specific features (FBM) if requested
+    if feature_names:
+        valid = [f for f in feature_names if f in X.columns]
+        if valid:
+            X = X[valid]
+        # else keep all features as fallback
+
+    y_series = y.iloc[:, 0]
+    common = X.index.intersection(y_series.index)
+    X = X.loc[common]
+    y_series = y_series.loc[common]
+
+    # Stratified subsampling if too many samples
+    if len(X) > max_samples:
+        sampled = []
+        for cls in sorted(y_series.unique()):
+            cls_idx = y_series[y_series == cls].index.tolist()
+            n_cls = max(1, int(max_samples * len(cls_idx) / len(y_series)))
+            step = max(1, len(cls_idx) // n_cls)
+            sampled.extend(cls_idx[::step][:n_cls])
+        X = X.loc[sampled]
+        y_series = y_series.loc[sampled]
+
+    mat = X.values.astype(float)
+    # Replace NaN with 0 for distance computation
+    mat = np.nan_to_num(mat, nan=0.0)
+
+    # Compute pairwise distance matrix
+    try:
+        dists = pdist(mat, metric=metric)
+    except ValueError:
+        # Fallback to euclidean if metric not supported
+        dists = pdist(mat, metric="euclidean")
+        metric = "euclidean"
+
+    D = squareform(dists)
+
+    # Classical MDS (PCoA) via double-centering + eigendecomposition
+    n = D.shape[0]
+    H = np.eye(n) - np.ones((n, n)) / n  # centering matrix
+    B = -0.5 * H @ (D ** 2) @ H
+
+    eigenvalues, eigenvectors = np.linalg.eigh(B)
+
+    # Sort by descending eigenvalue
+    idx = np.argsort(eigenvalues)[::-1]
+    eigenvalues = eigenvalues[idx]
+    eigenvectors = eigenvectors[:, idx]
+
+    # Take top 3 positive eigenvalues
+    n_components = min(3, np.sum(eigenvalues > 0))
+    if n_components == 0:
+        # Degenerate case — return zeros
+        coords = np.zeros((n, 3))
+        variance_explained = [0.0, 0.0, 0.0]
+    else:
+        pos_eigenvalues = eigenvalues[:n_components]
+        coords_partial = eigenvectors[:, :n_components] * np.sqrt(pos_eigenvalues)
+        # Pad to 3 if fewer components
+        coords = np.zeros((n, 3))
+        coords[:, :n_components] = coords_partial
+
+        total_positive = float(np.sum(eigenvalues[eigenvalues > 0]))
+        variance_explained = [
+            round(float(eigenvalues[i]) / total_positive * 100, 2) if i < n_components else 0.0
+            for i in range(3)
+        ]
+
+    class_labels = sorted([str(int(c)) for c in y_series.unique()])
+    y_int = y_series.astype(int).values
+
+    # --- Confidence ellipses (95%) per class on PCo1 x PCo2 ---
+    ellipses = _compute_ellipses(coords[:, :2], y_int, class_labels)
+
+    # --- PERMANOVA on the distance matrix ---
+    permanova = _compute_permanova(D, y_int, n_permutations=n_permutations)
+
+    return {
+        "coords": coords.tolist(),
+        "sample_names": X.index.tolist(),
+        "sample_classes": y_int.tolist(),
+        "class_labels": class_labels,
+        "variance_explained": variance_explained,
+        "metric": metric,
+        "n_samples": int(n),
+        "n_features_used": int(X.shape[1]),
+        "ellipses": ellipses,
+        "permanova": permanova,
+    }
+
+
+def _compute_ellipses(
+    coords_2d: np.ndarray,
+    y: np.ndarray,
+    class_labels: list[str],
+    confidence: float = 0.95,
+    n_points: int = 100,
+) -> dict[str, dict]:
+    """Compute 95% confidence ellipses for each class on 2D PCoA coordinates.
+
+    Uses the covariance matrix eigendecomposition to define the ellipse
+    axes and scales by the chi-squared critical value for the desired confidence.
+    """
+    from scipy.stats import chi2
+
+    chi2_val = chi2.ppf(confidence, df=2)
+    ellipses = {}
+
+    for cls_str in class_labels:
+        cls = int(cls_str)
+        mask = y == cls
+        pts = coords_2d[mask]
+
+        if len(pts) < 3:
+            continue
+
+        cx, cy = pts[:, 0].mean(), pts[:, 1].mean()
+        cov = np.cov(pts[:, 0], pts[:, 1])
+
+        eigenvalues, eigenvectors = np.linalg.eigh(cov)
+        # Sort descending
+        order = eigenvalues.argsort()[::-1]
+        eigenvalues = eigenvalues[order]
+        eigenvectors = eigenvectors[:, order]
+
+        # Semi-axes scaled by chi-squared
+        a = np.sqrt(eigenvalues[0] * chi2_val)
+        b = np.sqrt(eigenvalues[1] * chi2_val)
+        angle = np.arctan2(eigenvectors[1, 0], eigenvectors[0, 0])
+
+        # Generate ellipse points
+        theta = np.linspace(0, 2 * np.pi, n_points)
+        cos_a, sin_a = np.cos(angle), np.sin(angle)
+        ex = cx + a * np.cos(theta) * cos_a - b * np.sin(theta) * sin_a
+        ey = cy + a * np.cos(theta) * sin_a + b * np.sin(theta) * cos_a
+
+        ellipses[cls_str] = {
+            "x": ex.tolist(),
+            "y": ey.tolist(),
+            "center": [float(cx), float(cy)],
+        }
+
+    return ellipses
+
+
+def _compute_permanova(
+    D: np.ndarray,
+    y: np.ndarray,
+    n_permutations: int = 999,
+) -> dict[str, Any]:
+    """Compute PERMANOVA (Permutational Multivariate Analysis of Variance).
+
+    Tests whether group centroids differ significantly using the distance matrix.
+    Returns F-statistic, R², p-value, and number of permutations.
+    """
+    n = len(y)
+    classes = np.unique(y)
+    a = len(classes)  # number of groups
+
+    # Compute SS_total and SS_within from distance matrix
+    D2 = D ** 2
+
+    ss_total = np.sum(D2) / (2 * n)
+
+    ss_within = 0.0
+    for cls in classes:
+        mask = y == cls
+        ni = mask.sum()
+        if ni < 2:
+            continue
+        ss_within += np.sum(D2[np.ix_(mask, mask)]) / (2 * ni)
+
+    ss_between = ss_total - ss_within
+
+    # F-statistic
+    df_between = a - 1
+    df_within = n - a
+    if df_within <= 0 or ss_within == 0:
+        return {"F": 0.0, "R2": 0.0, "p_value": 1.0, "n_permutations": 0}
+
+    f_obs = (ss_between / df_between) / (ss_within / df_within)
+    r2 = ss_between / ss_total
+
+    # Permutation test
+    rng = np.random.default_rng(42)
+    n_ge = 0
+    for _ in range(n_permutations):
+        y_perm = rng.permutation(y)
+        ss_within_perm = 0.0
+        for cls in classes:
+            mask_p = y_perm == cls
+            ni = mask_p.sum()
+            if ni < 2:
+                continue
+            ss_within_perm += np.sum(D2[np.ix_(mask_p, mask_p)]) / (2 * ni)
+        ss_between_perm = ss_total - ss_within_perm
+        f_perm = (ss_between_perm / df_between) / (ss_within_perm / df_within) if ss_within_perm > 0 else 0.0
+        if f_perm >= f_obs:
+            n_ge += 1
+
+    p_value = (n_ge + 1) / (n_permutations + 1)
+
+    return {
+        "F": round(float(f_obs), 4),
+        "R2": round(float(r2), 4),
+        "p_value": round(float(p_value), 4),
+        "n_permutations": n_permutations,
+    }
+
+
 def scan_dataset_metadata(
     x_path: str,
     y_path: str,

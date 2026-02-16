@@ -162,6 +162,38 @@ async def get_barcode_data(
     return barcode
 
 
+@router.get("/{project_id}/pcoa")
+async def get_pcoa(
+    project_id: str,
+    metric: str = "braycurtis",
+    features: str = "",
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compute PCoA with confidence ellipses and PERMANOVA (viewer access).
+
+    Returns 3D coordinates, sample classes, % variance explained per axis,
+    95% confidence ellipses per class, and PERMANOVA test results.
+    Supported metrics: braycurtis (default), euclidean, jaccard, cosine.
+    Pass feature names as comma-separated string to restrict to FBM features.
+    """
+    allowed_metrics = ("braycurtis", "euclidean", "jaccard", "cosine")
+    if metric not in allowed_metrics:
+        raise HTTPException(400, f"Invalid metric: {metric}. Choose from {allowed_metrics}")
+
+    project, _ = await get_project_with_access(project_id, user, db, require_role="viewer")
+    x_path, y_path = _resolve_train_files(project)
+
+    feature_names = None
+    if features:
+        feature_names = [f.strip() for f in features.split(",") if f.strip()]
+
+    pcoa_result = data_analysis.compute_pcoa(
+        x_path, y_path, metric=metric, feature_names=feature_names,
+    )
+    return pcoa_result
+
+
 @router.post("/msp-annotations")
 async def get_msp_annotations(
     body: dict,

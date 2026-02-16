@@ -411,6 +411,46 @@
         </section>
       </div>
 
+      <!-- PCoA on FBM features -->
+      <section class="section" v-if="filteredPopulation.length > 0">
+        <h3>{{ $t('results.pcoaFbm') }}</h3>
+        <div class="pcoa-controls">
+          <label class="pcoa-control-item">
+            <span>{{ $t('data.pcoaMetric') }}</span>
+            <select v-model="popPcoaMetric" @change="loadPopPcoa">
+              <option value="braycurtis">Bray-Curtis</option>
+              <option value="euclidean">{{ $t('data.euclidean') }}</option>
+              <option value="jaccard">Jaccard</option>
+              <option value="cosine">{{ $t('data.cosine') }}</option>
+            </select>
+          </label>
+          <label class="toggle-label">
+            <input type="checkbox" v-model="popPcoaShowEllipses" @change="renderPopPcoaChart" />
+            {{ $t('data.ellipses') }}
+          </label>
+          <div class="pcoa-dim-toggle">
+            <button :class="{ active: popPcoaDim === '2d' }" @click="popPcoaDim = '2d'">2D</button>
+            <button :class="{ active: popPcoaDim === '3d' }" @click="popPcoaDim = '3d'">3D</button>
+          </div>
+        </div>
+        <div v-if="popPcoaData" class="pcoa-stats-row">
+          <span class="pcoa-info">
+            {{ popPcoaData.n_samples }} {{ $t('data.samples').toLowerCase() }}
+            &middot; {{ popPcoaData.n_features_used }} {{ $t('data.features').toLowerCase() }}
+            &middot; {{ popPcoaData.metric }}
+          </span>
+          <span v-if="popPcoaData.permanova" class="pcoa-permanova" :class="{ significant: popPcoaData.permanova.p_value < 0.05 }">
+            PERMANOVA: F={{ popPcoaData.permanova.F }}, R&sup2;={{ popPcoaData.permanova.R2 }},
+            p={{ popPcoaData.permanova.p_value < 0.001 ? '&lt; 0.001' : popPcoaData.permanova.p_value }}
+            <span v-if="popPcoaData.permanova.p_value < 0.001" class="sig-star">***</span>
+            <span v-else-if="popPcoaData.permanova.p_value < 0.01" class="sig-star">**</span>
+            <span v-else-if="popPcoaData.permanova.p_value < 0.05" class="sig-star">*</span>
+          </span>
+        </div>
+        <div ref="popPcoaChartEl" class="plotly-chart plotly-chart-pcoa"></div>
+        <div v-if="loadingPopPcoa" class="loading">{{ $t('data.loadingPcoa') }}</div>
+      </section>
+
       <!-- Population table -->
       <section class="section" v-if="filteredPopulation.length > 0">
         <h3>{{ $t('results.populationTable', { n: filteredPopulation.length }) }}</h3>
@@ -894,6 +934,13 @@ const selectedLanguages = ref([])
 const selectedDataTypes = ref([])
 const fbmEnabled = ref(false)
 
+// PCoA on FBM features state
+const popPcoaData = ref(null)
+const loadingPopPcoa = ref(false)
+const popPcoaMetric = ref('braycurtis')
+const popPcoaDim = ref('2d')
+const popPcoaShowEllipses = ref(true)
+
 // Comparative state
 const compareJobIds = ref([])
 const compareData = ref([])
@@ -947,6 +994,7 @@ const featurePrevalenceEl = ref(null)
 const popMetricsEl = ref(null)
 const compositionChartEl = ref(null)
 const metricsByTypeEl = ref(null)
+const popPcoaChartEl = ref(null)
 // Jury
 const juryComparisonEl = ref(null)
 const juryConcordanceEl = ref(null)
@@ -2101,6 +2149,116 @@ function renderPopulationCharts() {
   renderFeatureHeatmap()
   renderFeaturePrevalence()
   renderPopMetrics()
+  loadPopPcoa()
+}
+
+// ---------------------------------------------------------------------------
+// PCoA on FBM features (in Population sub-tab)
+// ---------------------------------------------------------------------------
+async function loadPopPcoa() {
+  const pop = filteredPopulation.value
+  if (pop.length === 0) return
+
+  // Collect unique feature names from the filtered population
+  const nameSet = new Set()
+  for (const ind of pop) {
+    if (ind.named_features) {
+      Object.keys(ind.named_features).forEach(f => nameSet.add(f))
+    }
+  }
+  const featureNames = [...nameSet]
+  if (featureNames.length === 0) return
+
+  const pid = route.params.id
+  loadingPopPcoa.value = true
+  try {
+    const params = { metric: popPcoaMetric.value, features: featureNames.join(',') }
+    const { data } = await axios.get(`/api/data-explore/${pid}/pcoa`, { params })
+    popPcoaData.value = data
+    await nextTick()
+    renderPopPcoaChart()
+  } catch (e) {
+    console.error('Failed to load population PCoA:', e)
+    popPcoaData.value = null
+  } finally {
+    loadingPopPcoa.value = false
+  }
+}
+
+async function renderPopPcoaChart() {
+  await nextTick()
+  const P = await ensurePlotly()
+  if (!popPcoaChartEl.value || !popPcoaData.value) return
+  const c = chartColors()
+  const d = popPcoaData.value
+  const ve = d.variance_explained
+
+  const palette = [c.class0, c.class1, c.accent, c.danger]
+  const classColorMap = {}
+  d.class_labels.forEach((lbl, i) => { classColorMap[lbl] = palette[i % palette.length] })
+
+  if (popPcoaDim.value === '3d') {
+    const traces = d.class_labels.map(cls => {
+      const mask = d.sample_classes.map((sc, i) => String(sc) === cls ? i : -1).filter(i => i >= 0)
+      return {
+        x: mask.map(i => d.coords[i][0]),
+        y: mask.map(i => d.coords[i][1]),
+        z: mask.map(i => d.coords[i][2]),
+        text: mask.map(i => d.sample_names[i]),
+        mode: 'markers', type: 'scatter3d',
+        name: `Class ${cls}`,
+        marker: { color: classColorMap[cls], size: 4, opacity: 0.85 },
+        hovertemplate: '%{text}<br>PCo1: %{x:.3f}<br>PCo2: %{y:.3f}<br>PCo3: %{z:.3f}<extra></extra>',
+      }
+    })
+    P.newPlot(popPcoaChartEl.value, traces, {
+      ...chartLayout({ height: 550 }),
+      scene: {
+        xaxis: { title: { text: `PCo1 (${ve[0]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        yaxis: { title: { text: `PCo2 (${ve[1]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        zaxis: { title: { text: `PCo3 (${ve[2]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        bgcolor: c.paper,
+      },
+      legend: { orientation: 'h', y: -0.05, font: { color: c.text } },
+    }, { responsive: true, displayModeBar: true })
+  } else {
+    const traces = d.class_labels.map(cls => {
+      const mask = d.sample_classes.map((sc, i) => String(sc) === cls ? i : -1).filter(i => i >= 0)
+      return {
+        x: mask.map(i => d.coords[i][0]),
+        y: mask.map(i => d.coords[i][1]),
+        text: mask.map(i => d.sample_names[i]),
+        mode: 'markers', type: 'scatter',
+        name: `Class ${cls}`,
+        marker: { color: classColorMap[cls], size: 7, opacity: 0.8, line: { color: classColorMap[cls], width: 0.5 } },
+        hovertemplate: '%{text}<br>PCo1: %{x:.3f}<br>PCo2: %{y:.3f}<extra></extra>',
+      }
+    })
+
+    // Confidence ellipses
+    if (popPcoaShowEllipses.value && d.ellipses) {
+      for (const cls of d.class_labels) {
+        const ell = d.ellipses[cls]
+        if (!ell) continue
+        traces.push({
+          x: ell.x, y: ell.y,
+          mode: 'lines', type: 'scatter',
+          name: `95% CI – Class ${cls}`,
+          line: { color: classColorMap[cls], width: 2, dash: 'dash' },
+          fill: 'toself',
+          fillcolor: classColorMap[cls] + '18',
+          hoverinfo: 'skip', showlegend: false,
+        })
+      }
+    }
+
+    P.newPlot(popPcoaChartEl.value, traces, chartLayout({
+      xaxis: { title: { text: `PCo1 (${ve[0]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
+      yaxis: { title: { text: `PCo2 (${ve[1]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
+      legend: { orientation: 'h', y: 1.12, font: { color: c.text } },
+      height: 500,
+    }), { responsive: true, displayModeBar: false })
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3216,6 +3374,9 @@ watch(selectedLanguages, debouncedPopRender, { deep: true })
 watch(selectedDataTypes, debouncedPopRender, { deep: true })
 watch(fbmEnabled, debouncedPopRender)
 
+// Re-render PCoA when switching 2D/3D
+watch(popPcoaDim, () => { if (popPcoaData.value) renderPopPcoaChart() })
+
 // Re-render co-presence charts when controls change
 let _copresenceTimer = null
 function debouncedCopresenceRender() {
@@ -4160,6 +4321,54 @@ onMounted(loadJobList)
   font-size: 0.82rem;
   max-width: 300px;
 }
+
+/* PCoA in Population */
+.pcoa-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+.pcoa-control-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.pcoa-control-item select { min-width: 120px; }
+.pcoa-dim-toggle { display: flex; }
+.pcoa-dim-toggle button {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-body);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.pcoa-dim-toggle button:first-child { border-radius: 4px 0 0 4px; }
+.pcoa-dim-toggle button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
+.pcoa-dim-toggle button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.pcoa-stats-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.pcoa-info { font-size: 0.78rem; color: var(--text-faint); }
+.pcoa-permanova {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  background: var(--bg-badge);
+  padding: 0.2rem 0.6rem;
+  border-radius: 6px;
+  font-family: monospace;
+}
+.pcoa-permanova.significant { color: var(--success-dark); background: var(--success-bg-alt); }
+.sig-star { color: var(--danger); font-weight: 700; margin-left: 0.2rem; }
+.plotly-chart-pcoa { min-height: 500px; }
 
 @media (max-width: 900px) {
   .best-model-layout { grid-template-columns: 1fr; }
