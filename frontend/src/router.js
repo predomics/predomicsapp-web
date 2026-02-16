@@ -45,6 +45,11 @@ const routes = [
     component: () => import('./views/DatasetLibrary.vue'),
   },
   {
+    path: '/meta-analysis',
+    name: 'MetaAnalysis',
+    component: () => import('./views/MetaAnalysisView.vue'),
+  },
+  {
     path: '/admin',
     name: 'Admin',
     component: () => import('./views/AdminView.vue'),

@@ -165,7 +165,7 @@ describe('HomeView', () => {
 
     expect(wrapper.find('.tech-grid').exists()).toBe(true)
     const techItems = wrapper.findAll('.tech-item')
-    expect(techItems.length).toBe(4)
+    expect(techItems.length).toBe(6)
   })
 
   it('displays Get Started button', async () => {

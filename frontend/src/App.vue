@@ -6,12 +6,16 @@
         PredomicsApp
       </router-link>
       <div class="nav-links">
-        <router-link v-if="auth.isLoggedIn" to="/dashboard">Dashboard</router-link>
-        <router-link v-if="auth.isLoggedIn" to="/projects">Projects</router-link>
-        <router-link v-if="auth.isLoggedIn" to="/datasets">Datasets</router-link>
-        <router-link v-if="auth.isLoggedIn && auth.isAdmin" to="/admin">Admin</router-link>
+        <router-link v-if="auth.isLoggedIn" to="/dashboard">{{ $t('nav.dashboard') }}</router-link>
+        <router-link v-if="auth.isLoggedIn" to="/projects">{{ $t('nav.projects') }}</router-link>
+        <router-link v-if="auth.isLoggedIn" to="/datasets">{{ $t('nav.datasets') }}</router-link>
+        <router-link v-if="auth.isLoggedIn" to="/meta-analysis">{{ $t('nav.metaAnalysis') }}</router-link>
+        <router-link v-if="auth.isLoggedIn && auth.isAdmin" to="/admin">{{ $t('nav.admin') }}</router-link>
       </div>
       <div class="nav-right">
+        <button class="lang-btn" @click="toggleLocale" :title="currentLocale">
+          {{ currentLocale.toUpperCase() }}
+        </button>
         <button class="theme-btn" @click="theme.cycle()" :title="`Theme: ${theme.mode}`">
           <span v-if="theme.mode === 'light'">&#9788;</span>
           <span v-else-if="theme.mode === 'dark'">&#9790;</span>
@@ -19,9 +23,9 @@
         </button>
         <template v-if="auth.isLoggedIn">
           <router-link to="/profile" class="user-email">{{ auth.user?.email }}</router-link>
-          <button class="btn-logout" @click="handleLogout">Logout</button>
+          <button class="btn-logout" @click="handleLogout">{{ $t('nav.logout') }}</button>
         </template>
-        <router-link v-else to="/login" class="btn-login">Login</router-link>
+        <router-link v-else to="/login" class="btn-login">{{ $t('nav.login') }}</router-link>
       </div>
     </nav>
     <main class="container">
@@ -33,16 +37,28 @@
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useAuthStore } from './stores/auth'
 import { useThemeStore } from './stores/theme'
+import { LOCALES } from './i18n'
 import OnboardingTour from './components/OnboardingTour.vue'
 import ToastContainer from './components/ToastContainer.vue'
 
 const auth = useAuthStore()
 const theme = useThemeStore()
 const router = useRouter()
+const { locale } = useI18n()
+
+const currentLocale = computed(() => locale.value)
+
+function toggleLocale() {
+  const codes = LOCALES.map(l => l.code)
+  const idx = codes.indexOf(locale.value)
+  locale.value = codes[(idx + 1) % codes.length]
+  localStorage.setItem('locale', locale.value)
+}
 
 onMounted(async () => {
   if (auth.token && !auth.user) {
@@ -298,6 +314,25 @@ body {
   display: flex;
   align-items: center;
   gap: 1rem;
+}
+
+.lang-btn {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.15);
+  color: var(--text-nav-link);
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+  transition: all 0.2s;
+  letter-spacing: 0.5px;
+}
+
+.lang-btn:hover {
+  border-color: var(--brand);
+  color: var(--brand);
 }
 
 .theme-btn {

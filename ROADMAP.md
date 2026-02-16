@@ -345,29 +345,32 @@ Auto-generate publication-ready PDF summarizing analysis findings.
 - Backend: `GET /api/export/{pid}/jobs/{jid}/pdf` endpoint
 - Frontend: "PDF Biomarker Report" option in Export dropdown
 
-### 30. Multi-Cohort Meta-Analysis
-**Priority:** HIGH | **Effort:** High | **Status:** Pending
+### 30. Multi-Cohort Meta-Analysis ✅
+**Priority:** HIGH | **Effort:** High | **Status:** Done
 
 Compare models trained on different datasets for the same phenotype.
 
-- Select multiple completed jobs (cross-project) for comparison
-- Shared feature overlap analysis (Venn diagram or UpSet plot)
-- Concordance of feature directions (same sign across cohorts)
-- Meta-AUC estimation across datasets
-- Frontend: new "Meta-Analysis" top-level view
-- Backend: cross-project job query endpoint
+- Backend: `GET /api/meta-analysis/searchable-jobs` — cross-project completed job search
+- Backend: `POST /api/meta-analysis/compare` — feature overlap, concordance, meta-AUC
+- Frontend: new "Meta-Analysis" top-level view with job picker (chip-based, 2-10 jobs)
+- Metrics comparison table with best-value highlighting
+- Feature overlap chart (horizontal bars by cohort count)
+- Concordance matrix: feature × job grid colored by coefficient sign (green/red/grey)
+- Meta-AUC card (weighted average across cohorts)
+- "Meta-Analysis" link in navbar
 
-### 31. SHAP-Style Feature Explanations
-**Priority:** MEDIUM | **Effort:** Medium | **Status:** Pending
+### 31. SHAP-Style Feature Explanations ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
 
 Per-sample feature contribution breakdown for model interpretability.
 
-- Compute Shapley-like values: feature × coefficient × sample value
-- Beeswarm plot: feature impact distribution across all samples
-- Force plot: single-sample waterfall of feature contributions
-- Dependence plot: feature value vs. SHAP value scatter
-- All computed client-side from existing results + barcode data
-- Frontend: "Explanations" section in Best Model sub-tab
+- `useShapValues` composable: `computeShapMatrix()` computes SHAP values (feature × coef × sample value)
+- Beeswarm plot: horizontal strip per feature, x=SHAP value, color=feature value (Viridis)
+- Force plot: waterfall for single sample showing cumulative feature contributions
+- Dependence plot: scatter of feature value vs SHAP value, colored by class
+- Feature importance ordering by mean |SHAP|
+- Entirely client-side using existing barcode-data API
+- "Feature Explanations" section in Best Model sub-tab with 3 switchable views
 
 ### 32. Project Comments & Activity Feed ✅
 **Priority:** MEDIUM | **Effort:** Low | **Status:** Done
@@ -407,34 +410,48 @@ Global view of all projects with summary statistics and recent activity.
 - Summary cards grid: Projects, Datasets, Running, Completed, Failed, Shared
 - "Dashboard" link in navbar (before Projects)
 
-### 35. E2E Integration Tests
-**Priority:** MEDIUM | **Effort:** Medium | **Status:** Pending
+### 35. E2E Integration Tests ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
 
 Automated end-to-end testing using Playwright.
 
-- Extend existing `capture_screenshots.mjs` into full test suite
-- Test flows: register → create project → upload data → run analysis → view results
-- Assert page content, not just screenshots
-- CI integration: run E2E tests in GitHub Actions with Docker
-- Smoke test for production deployments
+- `playwright.config.mjs` at repo root with dark theme, 1440×900 viewport
+- 10 E2E test cases in `tests/e2e/e2e.spec.mjs`:
+  1. Landing page loads and shows brand
+  2. User registration flow
+  3. Login with credentials
+  4. Create project
+  5. Upload dataset files
+  6. Dashboard displays summary cards
+  7. Meta-analysis page accessible
+  8. Public share page loads for guests
+  9. Health API endpoint returns ok
+  10. Swagger docs accessible
+- Root `package.json` with `test:e2e` script and `@playwright/test` dependency
+- CI integration: `e2e-test` job in GitHub Actions after Docker build
 
-### 36. CI/CD Pipeline & Docker Registry
-**Priority:** LOW | **Effort:** Low | **Status:** Pending
+### 36. CI/CD Pipeline & Docker Registry ✅
+**Priority:** LOW | **Effort:** Low | **Status:** Done
 
 Auto-deploy on tag push with container registry publishing.
 
-- GitHub Actions: build + push Docker image to GHCR on version tags
-- Auto-deploy to staging on main push (optional webhook)
-- Release artifact: pre-built Docker image for easy deployment
-- Version label in Docker image metadata
+- `.github/workflows/release.yml` triggered on `v*` tags
+- Multi-repo checkout (predomicsapp-web, gpredomics, gpredomicspy)
+- Login to GHCR, build and push with `docker/build-push-action`
+- Tags: `ghcr.io/{owner}/predomicsapp-web:latest` + `:{version}`
+- GitHub Actions cache (`type=gha`) for faster rebuilds
+- OCI metadata labels in Dockerfile (title, description, source, license)
 
-### 37. Internationalization (i18n)
-**Priority:** LOW | **Effort:** High | **Status:** Pending
+### 37. Internationalization (i18n) ✅
+**Priority:** LOW | **Effort:** High | **Status:** Done
 
 Multi-language support starting with French.
 
-- vue-i18n integration with JSON locale files
-- Extract all user-facing strings to translation keys
-- Language selector in navbar or profile settings
-- Initial languages: English (default), French
-- Backend: translatable error messages
+- `vue-i18n@9` integration with JSON locale files
+- `frontend/src/i18n/` module with `createI18n()` setup
+- English (`en.json`) and French (`fr.json`) locale files (~100 strings each)
+- Namespaces: nav, home, login, dashboard, projects, results, meta, common
+- Language selector button (EN/FR toggle) in navbar next to theme toggle
+- `localStorage.locale` persistence across sessions
+- Navbar links translated via `$t('nav.dashboard')` etc.
+- Backend: `Accept-Language` header parsing in `core/errors.py` for translated error messages
