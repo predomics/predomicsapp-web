@@ -6,6 +6,8 @@ import hashlib
 import itertools
 import json
 import logging
+import re
+import time
 import uuid
 from typing import Optional
 from datetime import datetime, timezone
@@ -27,7 +29,7 @@ from ..models.schemas import (
     IndividualResponse,
     JobStatus,
 )
-from ..services import engine, storage, audit
+from ..services import engine, storage, audit, scitq_client
 from ..services.prediction import predict_from_model, parse_tsv
 from ..services.webhooks import send_webhook_sync
 
@@ -114,8 +116,22 @@ async def run_analysis(
                            details={"project_id": project_id})
     await db.commit()  # Ensure all writes are flushed before background task starts
 
-    # Run in background thread
-    background_tasks.add_task(_run_job, job.id, project_id, param_path, user.id)
+    # Dispatch to scitq or run locally
+    if scitq_client.is_enabled():
+        try:
+            scitq_task_id = scitq_client.dispatch_job(
+                job.id, project_id, param_path, str(job_dir),
+            )
+            job.scitq_task_id = scitq_task_id
+            await db.commit()
+            background_tasks.add_task(
+                _poll_scitq_job, job.id, project_id, scitq_task_id, user.id,
+            )
+        except Exception as e:
+            logger.error("scitq dispatch failed, falling back to local: %s", e)
+            background_tasks.add_task(_run_job, job.id, project_id, param_path, user.id)
+    else:
+        background_tasks.add_task(_run_job, job.id, project_id, param_path, user.id)
 
     return ExperimentSummary(job_id=job.id, name=job.name, status=JobStatus.pending)
 
@@ -223,15 +239,38 @@ async def run_batch(
             output_dir=str(job_dir),
         )
 
-        background_tasks.add_task(_run_job, job.id, project_id, param_path, user.id)
-        job_summaries.append({"job_id": job.id, "name": job_name})
+        scitq_tid = None
+        if scitq_client.is_enabled():
+            try:
+                scitq_tid = scitq_client.dispatch_job(
+                    job.id, project_id, param_path, str(job_dir),
+                )
+                job.scitq_task_id = scitq_tid
+            except Exception as e:
+                logger.error("scitq dispatch failed for batch job %s: %s", job.id, e)
+        job_summaries.append({
+            "job_id": job.id, "name": job_name,
+            "_param_path": param_path, "_scitq_tid": scitq_tid,
+        })
 
     await db.commit()
+
+    # Start pollers/local tasks after commit
+    for js in job_summaries:
+        jid = js["job_id"]
+        if js.get("_scitq_tid"):
+            background_tasks.add_task(
+                _poll_scitq_job, jid, project_id, js["_scitq_tid"], user.id,
+            )
+        else:
+            background_tasks.add_task(
+                _run_job, jid, project_id, js["_param_path"], user.id,
+            )
 
     return {
         "batch_id": batch_id,
         "job_count": len(job_summaries),
-        "jobs": job_summaries,
+        "jobs": [{"job_id": j["job_id"], "name": j["name"]} for j in job_summaries],
     }
 
 
@@ -356,11 +395,63 @@ def _run_job(job_id: str, project_id: str, param_path: str, user_id: str = "") -
             env=env,
         )
 
-        # Read output line-by-line and flush to log file immediately
+        # Read output line-by-line, flush to log, and track progress
+        progress_path = job_dir / "progress.json"
+        gen_re = re.compile(r"#(\d+)\s+\|\s+best:\s+(\S+)")
+        k_re = re.compile(r"\[k=(\d+)")
+        epoch_re = re.compile(r"max_epochs[:\s]+(\d+)", re.IGNORECASE)
+        progress_points = []
+        max_gen = 0
+        t0 = time.monotonic()
+
         with open(log_path, "w") as lf:
             for line in proc.stdout:
-                lf.write(line.decode("utf-8", errors="replace"))
+                text = line.decode("utf-8", errors="replace")
+                lf.write(text)
                 lf.flush()
+
+                clean = re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+                # Extract max_epochs from early config echo
+                if not max_gen:
+                    em = epoch_re.search(clean)
+                    if em:
+                        max_gen = int(em.group(1))
+
+                # Extract generation progress
+                gm = gen_re.search(clean)
+                if gm:
+                    gen = int(gm.group(1))
+                    lang = gm.group(2)
+                    k = 0
+                    km = k_re.search(clean)
+                    if km:
+                        k = int(km.group(1))
+                    progress_points.append({
+                        "generation": gen,
+                        "k": k,
+                        "language": lang,
+                        "elapsed": round(time.monotonic() - t0, 1),
+                    })
+                    # Write progress every 5 generations to avoid excessive I/O
+                    if gen % 5 == 0 or gen == max_gen:
+                        try:
+                            progress_path.write_text(json.dumps({
+                                "max_gen": max_gen,
+                                "points": progress_points,
+                            }))
+                        except Exception:
+                            pass
+
+        # Final progress write
+        if progress_points:
+            try:
+                progress_path.write_text(json.dumps({
+                    "max_gen": max_gen,
+                    "points": progress_points,
+                }))
+            except Exception:
+                pass
 
         proc.wait()
 
@@ -412,6 +503,109 @@ def _run_job(job_id: str, project_id: str, param_path: str, user_id: str = "") -
 
         logger.error("Job %s failed: %s", job_id, e)
 
+        if user_id:
+            _fire_webhooks(user_id, "job.failed", {
+                "event": "job.failed", "job_id": job_id, "project_id": project_id,
+                "error": str(e),
+            })
+
+
+def _poll_scitq_job(
+    job_id: str, project_id: str, scitq_task_id: int, user_id: str = "",
+) -> None:
+    """Poll scitq for task status and stream output to console.log.
+
+    Runs in a Starlette thread pool. Checks every 5 seconds until the task
+    reaches a terminal state (completed/failed), then extracts results.
+    """
+    import time
+
+    job_dir = Path(storage.settings.project_dir) / project_id / "jobs" / job_id
+    log_path = job_dir / "console.log"
+    results_path = job_dir / "results.json"
+    last_output_len = 0
+
+    try:
+        while True:
+            status = scitq_client.get_task_status(scitq_task_id)
+
+            # Update job status in DB
+            with sync_session_factory() as db:
+                job = db.execute(select(Job).where(Job.id == job_id)).scalar_one()
+                if job.status != status and status in ("running", "completed", "failed"):
+                    job.status = status
+                    db.commit()
+
+            # Stream output to console.log
+            output = scitq_client.get_task_output(scitq_task_id)
+            if output and len(output) > last_output_len:
+                with open(log_path, "w") as lf:
+                    lf.write(output)
+                last_output_len = len(output)
+
+            if status == "completed":
+                # Extract best_auc/best_k from results
+                best_auc_val = None
+                best_k_val = None
+                if results_path.exists():
+                    try:
+                        with open(results_path) as rf:
+                            res = json.load(rf)
+                        best = res.get("best_individual", {})
+                        best_auc_val = best.get("auc")
+                        best_k_val = best.get("k")
+                    except Exception:
+                        pass
+
+                with sync_session_factory() as db:
+                    job = db.execute(select(Job).where(Job.id == job_id)).scalar_one()
+                    job.status = "completed"
+                    job.results_path = str(results_path)
+                    job.completed_at = datetime.now(timezone.utc)
+                    job.disk_size_bytes = _job_disk_size(project_id, job_id)
+                    job.best_auc = best_auc_val
+                    job.best_k = best_k_val
+                    db.commit()
+
+                logger.info("Job %s completed via scitq (task %s)", job_id, scitq_task_id)
+                if user_id:
+                    _fire_webhooks(user_id, "job.completed", {
+                        "event": "job.completed", "job_id": job_id, "project_id": project_id,
+                    })
+                return
+
+            if status == "failed":
+                error_msg = f"scitq task {scitq_task_id} failed"
+                if output:
+                    error_msg += f": {output[-500:]}"
+
+                with sync_session_factory() as db:
+                    job = db.execute(select(Job).where(Job.id == job_id)).scalar_one()
+                    job.status = "failed"
+                    job.error_message = error_msg
+                    job.completed_at = datetime.now(timezone.utc)
+                    db.commit()
+
+                logger.error("Job %s failed via scitq (task %s)", job_id, scitq_task_id)
+                if user_id:
+                    _fire_webhooks(user_id, "job.failed", {
+                        "event": "job.failed", "job_id": job_id, "project_id": project_id,
+                        "error": error_msg,
+                    })
+                return
+
+            time.sleep(5)
+
+    except Exception as e:
+        logger.error("scitq poller error for job %s: %s", job_id, e)
+        with open(log_path, "a") as lf:
+            lf.write(f"\n[error] scitq poller: {e}\n")
+        with sync_session_factory() as db:
+            job = db.execute(select(Job).where(Job.id == job_id)).scalar_one()
+            job.status = "failed"
+            job.error_message = f"scitq poller error: {e}"
+            job.completed_at = datetime.now(timezone.utc)
+            db.commit()
         if user_id:
             _fire_webhooks(user_id, "job.failed", {
                 "event": "job.failed", "job_id": job_id, "project_id": project_id,
@@ -499,6 +693,26 @@ async def get_job_logs(
         "status": job.status,
         "log": log_content,
     }
+
+
+@router.get("/{project_id}/jobs/{job_id}/progress")
+async def get_job_progress(
+    project_id: str,
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get structured progress data for a running job."""
+    await _verify_job_access(project_id, job_id, user, db)
+    progress_path = (
+        Path(storage.settings.project_dir) / project_id / "jobs" / job_id / "progress.json"
+    )
+    if progress_path.exists():
+        try:
+            return json.loads(progress_path.read_text())
+        except Exception:
+            pass
+    return {"max_gen": 0, "points": []}
 
 
 @router.get("/{project_id}/jobs/{job_id}", response_model=ExperimentSummary)

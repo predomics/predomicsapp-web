@@ -58,6 +58,74 @@
       </tbody>
     </table>
 
+    <!-- scitq Distributed Task Queue Section -->
+    <h2 class="section-title">{{ $t('admin.scitqTitle') }}</h2>
+    <p class="section-desc">{{ $t('admin.scitqDesc') }}</p>
+
+    <div v-if="scitqLoading" class="loading">{{ $t('common.loading') }}</div>
+    <div v-else class="scitq-section">
+      <div class="scitq-status-bar">
+        <span class="scitq-badge" :class="scitqConfig.enabled ? 'on' : 'off'">
+          {{ scitqConfig.enabled ? $t('admin.scitqEnabled') : $t('admin.scitqDisabled') }}
+        </span>
+        <span v-if="!scitqConfig.package_installed" class="scitq-warning">
+          {{ $t('admin.scitqNotInstalled') }}
+        </span>
+      </div>
+
+      <div class="scitq-grid">
+        <div class="scitq-field">
+          <label for="scitq-server">{{ $t('admin.scitqServerLabel') }}</label>
+          <input
+            id="scitq-server"
+            type="text"
+            v-model="scitqForm.server"
+            placeholder="scitq-server:5000"
+          />
+        </div>
+        <div class="scitq-field">
+          <label for="scitq-token">{{ $t('admin.scitqTokenLabel') }}</label>
+          <input
+            id="scitq-token"
+            type="password"
+            v-model="scitqForm.token"
+            :placeholder="$t('admin.scitqTokenPlaceholder')"
+          />
+        </div>
+        <div class="scitq-field">
+          <label for="scitq-container">{{ $t('admin.scitqContainerLabel') }}</label>
+          <input
+            id="scitq-container"
+            type="text"
+            v-model="scitqForm.container"
+            placeholder="predomics-app:latest"
+          />
+        </div>
+      </div>
+
+      <div class="scitq-actions">
+        <button class="btn-save" @click="saveScitq" :disabled="scitqSaving">
+          {{ scitqSaving ? $t('admin.saving') : $t('common.save') }}
+        </button>
+        <button class="btn-test" @click="testScitq" :disabled="scitqTesting || !scitqForm.server">
+          {{ scitqTesting ? $t('admin.scitqTesting') : $t('admin.scitqTestConnection') }}
+        </button>
+        <span v-if="scitqSaved" class="save-ok">{{ $t('admin.saved') }}</span>
+      </div>
+
+      <div v-if="scitqTestResult" :class="['scitq-test-msg', scitqTestResult.ok ? 'success' : 'error']">
+        <template v-if="scitqTestResult.ok">
+          {{ $t('admin.scitqConnected') }}
+          <span v-if="scitqTestResult.workers !== undefined">
+            — {{ scitqTestResult.workers }} {{ $t('admin.scitqWorkers') }}
+          </span>
+        </template>
+        <template v-else>
+          {{ $t('admin.scitqConnectionFailed') }}: {{ scitqTestResult.error }}
+        </template>
+      </div>
+    </div>
+
     <!-- Default Parameters Section -->
     <h2 class="section-title">{{ $t('admin.defaultParams') }}</h2>
     <p class="section-desc">{{ $t('admin.defaultParamsDesc') }}</p>
@@ -341,6 +409,65 @@ async function deleteUser(u) {
 }
 
 // ---------------------------------------------------------------------------
+// scitq Configuration
+// ---------------------------------------------------------------------------
+
+const scitqConfig = reactive({ enabled: false, package_installed: false })
+const scitqForm = reactive({ server: '', token: '', container: '' })
+const scitqLoading = ref(false)
+const scitqSaving = ref(false)
+const scitqSaved = ref(false)
+const scitqTesting = ref(false)
+const scitqTestResult = ref(null)
+
+async function fetchScitq() {
+  scitqLoading.value = true
+  try {
+    const { data } = await axios.get('/api/admin/scitq')
+    scitqConfig.enabled = data.enabled
+    scitqConfig.package_installed = data.package_installed
+    scitqForm.server = data.server || ''
+    scitqForm.token = data.token || ''
+    scitqForm.container = data.container || ''
+  } catch { /* ignore */ }
+  finally { scitqLoading.value = false }
+}
+
+async function saveScitq() {
+  scitqSaving.value = true
+  scitqSaved.value = false
+  scitqTestResult.value = null
+  try {
+    const { data } = await axios.put('/api/admin/scitq', {
+      server: scitqForm.server.trim(),
+      token: scitqForm.token,
+      container: scitqForm.container.trim(),
+    })
+    scitqConfig.enabled = data.enabled
+    scitqConfig.package_installed = data.package_installed
+    scitqSaved.value = true
+    setTimeout(() => { scitqSaved.value = false }, 3000)
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to save scitq config')
+  } finally {
+    scitqSaving.value = false
+  }
+}
+
+async function testScitq() {
+  scitqTesting.value = true
+  scitqTestResult.value = null
+  try {
+    const { data } = await axios.post('/api/admin/scitq/test')
+    scitqTestResult.value = data
+  } catch (e) {
+    scitqTestResult.value = { ok: false, error: e.response?.data?.detail || e.message }
+  } finally {
+    scitqTesting.value = false
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Backup & Restore
 // ---------------------------------------------------------------------------
 
@@ -536,6 +663,7 @@ async function fetchAuditLog(page = 1) {
 
 onMounted(() => {
   fetchUsers()
+  fetchScitq()
   fetchDefaults()
   fetchBackups()
   fetchTemplates()
@@ -707,6 +835,97 @@ onMounted(() => {
   font-size: 0.85rem;
   color: var(--success-dark, #2e7d32);
   font-weight: 500;
+}
+
+/* scitq Configuration */
+.scitq-section {
+  background: var(--bg-card);
+  border-radius: 8px;
+  padding: 1rem;
+  border: 1px solid var(--border-lighter);
+  margin-bottom: 1rem;
+}
+.scitq-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.scitq-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.scitq-badge.on {
+  background: var(--success-bg, #e8f5e9);
+  color: var(--success-dark, #2e7d32);
+}
+.scitq-badge.off {
+  background: var(--bg-badge);
+  color: var(--text-muted);
+}
+.scitq-warning {
+  font-size: 0.78rem;
+  color: var(--warning-dark, #e65100);
+  background: var(--warning-bg, #fff3e0);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+.scitq-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.scitq-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.scitq-field label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.scitq-field input {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: var(--bg-input);
+  color: var(--text-body);
+}
+.scitq-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+.btn-test {
+  padding: 0.4rem 1rem;
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.btn-test:hover { background: var(--accent-faint, rgba(59, 130, 246, 0.08)); }
+.btn-test:disabled { opacity: 0.5; cursor: not-allowed; }
+.scitq-test-msg {
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+.scitq-test-msg.success {
+  background: var(--success-bg, #e8f5e9);
+  color: var(--success-dark, #2e7d32);
+}
+.scitq-test-msg.error {
+  background: var(--danger-bg, #ffebee);
+  color: var(--danger, #c62828);
 }
 
 /* Backup & Restore */

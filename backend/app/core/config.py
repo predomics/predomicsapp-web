@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     smtp_tls: bool = True
     frontend_url: str = "http://localhost:5173"
 
+    # scitq distributed task queue (optional — empty = disabled, local execution)
+    scitq_server: str = ""        # e.g. "scitq-server:5000"
+    scitq_token: str = ""         # auth token (for future scitq versions)
+    scitq_container: str = ""     # Docker image for workers (e.g. "predomics-app:latest")
+
     # Rate limiting
     rate_limit_enabled: bool = True
     rate_limit_auth: str = "10/minute"

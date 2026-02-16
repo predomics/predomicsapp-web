@@ -18,6 +18,7 @@ from ..core.security import hash_password
 from ..models.db_models import User, Project, Dataset, AuditLog
 from ..models.auth_schemas import AdminUserResponse, AdminUserUpdate
 from ..services import audit
+from ..services import scitq_client
 
 DEFAULTS_PATH = Path(settings.data_dir) / "admin_defaults.json"
 
@@ -321,3 +322,49 @@ async def admin_reset_password(
         raise HTTPException(status_code=404, detail="User not found")
     target.hashed_password = hash_password(new_password)
     return {"status": "password_reset", "email": target.email}
+
+
+# ---------------------------------------------------------------------------
+# scitq Distributed Task Queue Configuration
+# ---------------------------------------------------------------------------
+
+
+@router.get("/scitq")
+async def get_scitq_config(admin: User = Depends(get_admin_user)):
+    """Get current scitq configuration and status (admin only)."""
+    cfg = scitq_client.get_config()
+    return {
+        "server": cfg["server"],
+        "token": cfg["token"],
+        "container": cfg["container"],
+        "enabled": scitq_client.is_enabled(),
+        "package_installed": scitq_client._HAS_SCITQ,
+    }
+
+
+@router.put("/scitq")
+async def set_scitq_config(
+    body: dict = Body(...),
+    admin: User = Depends(get_admin_user),
+):
+    """Update scitq configuration (admin only).
+
+    Accepts: {"server": "...", "token": "...", "container": "..."}
+    """
+    allowed_keys = {"server", "token", "container"}
+    clean = {k: v for k, v in body.items() if k in allowed_keys}
+    scitq_client.save_runtime_config(clean)
+    cfg = scitq_client.get_config()
+    return {
+        "server": cfg["server"],
+        "token": cfg["token"],
+        "container": cfg["container"],
+        "enabled": scitq_client.is_enabled(),
+        "package_installed": scitq_client._HAS_SCITQ,
+    }
+
+
+@router.post("/scitq/test")
+async def test_scitq_connection(admin: User = Depends(get_admin_user)):
+    """Test connectivity to the configured scitq server (admin only)."""
+    return scitq_client.test_connection()

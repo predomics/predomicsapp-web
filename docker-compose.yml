@@ -39,6 +39,28 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Optional: scitq distributed task queue (uncomment to enable)
+  # Set PREDOMICS_SCITQ_SERVER=scitq-server:5000 in the app environment above
+  # ---------------------------------------------------------------------------
+  # scitq-server:
+  #   image: gmtscience/scitq-server:latest
+  #   container_name: predomics-scitq-server
+  #   ports:
+  #     - "5000:5000"
+  #   restart: unless-stopped
+  #
+  # scitq-worker:
+  #   image: predomics-app:latest
+  #   container_name: predomics-scitq-worker
+  #   volumes:
+  #     - app-data:/app/data
+  #   environment:
+  #     - SCITQ_SERVER=scitq-server
+  #   depends_on:
+  #     - scitq-server
+  #   restart: unless-stopped
+
 volumes:
   app-data:
   pg-data:
