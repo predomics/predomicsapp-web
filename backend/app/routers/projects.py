@@ -4,7 +4,7 @@ import io
 from datetime import datetime, timezone
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -44,6 +44,7 @@ def _build_project_info(project: Project) -> ProjectInfo:
         name=project.name,
         description=project.description,
         class_names=project.class_names,
+        archived=project.archived,
         created_at=project.created_at.isoformat(),
         updated_at=project.updated_at.isoformat() if project.updated_at else None,
         datasets=datasets,
@@ -94,6 +95,7 @@ async def create_project(
 
 @router.get("/", response_model=list[ProjectInfo])
 async def list_projects(
+    include_archived: bool = Query(False, description="Include archived projects"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -105,6 +107,8 @@ async def list_projects(
         .order_by(Project.created_at.desc())
     )
     projects = result.scalars().all()
+    if not include_archived:
+        projects = [p for p in projects if not p.archived]
     return [_build_project_info(p) for p in projects]
 
 
@@ -150,6 +154,18 @@ async def delete_project(
     await db.delete(project)
     storage.delete_project_files(project_id)
     return {"status": "deleted"}
+
+
+@router.post("/{project_id}/archive", response_model=ProjectInfo)
+async def toggle_archive(
+    project_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle archived status of a project (owner only)."""
+    project, _ = await get_project_with_access(project_id, user, db, require_role="owner")
+    project.archived = not project.archived
+    return _build_project_info(project)
 
 
 @router.post("/{project_id}/datasets", response_model=DatasetInfo)

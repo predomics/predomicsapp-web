@@ -268,6 +268,7 @@ class ProjectInfo(BaseModel):
     name: str
     description: str = ""
     class_names: Optional[dict] = None
+    archived: bool = False
     created_at: str
     updated_at: Optional[str] = None
     datasets: list[DatasetRef] = []
@@ -281,6 +282,8 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "0.1.0"
     gpredomicspy_available: bool = False
+    scitq_enabled: bool = False
+    scitq_server: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

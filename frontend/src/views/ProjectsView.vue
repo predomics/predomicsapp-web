@@ -17,8 +17,14 @@
         <button @click="createProject" :disabled="!newName.trim()">Create</button>
       </div>
 
-      <!-- Search -->
-      <input v-model="search" placeholder="Search projects..." class="search-input" />
+      <!-- Search + Archive filter -->
+      <div class="filter-row">
+        <input v-model="search" placeholder="Search projects..." class="search-input" />
+        <label class="archive-toggle" :title="$t('projects.showArchived')">
+          <input type="checkbox" v-model="showArchived" @change="refetchProjects" />
+          <span class="archive-label">{{ $t('projects.showArchived') }}</span>
+        </label>
+      </div>
 
       <!-- Demo datasets -->
       <div v-if="availableSamples.length > 0" class="section-label">
@@ -68,6 +74,7 @@
         :project="selectedProject"
         @open="openProject"
         @share="openProject"
+        @archive="handleArchive"
         @delete="handleDelete"
       />
       <EmptyState
@@ -82,18 +89,21 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import { useProjectStore } from '../stores/project'
 import ProjectCard from '../components/projects/ProjectCard.vue'
 import ProjectDetailPanel from '../components/projects/ProjectDetailPanel.vue'
 import EmptyState from '../components/projects/EmptyState.vue'
 
+const { t } = useI18n()
 const router = useRouter()
 const store = useProjectStore()
 
 const newName = ref('')
 const showCreate = ref(false)
 const search = ref('')
+const showArchived = ref(false)
 const loading = ref(true)
 const samples = ref([])
 const loadingSample = ref(false)
@@ -110,9 +120,12 @@ const selectedProject = computed(() =>
 )
 
 const filteredProjects = computed(() => {
-  if (!search.value) return store.projects
-  const q = search.value.toLowerCase()
-  return store.projects.filter(p => p.name.toLowerCase().includes(q))
+  let list = store.projects
+  if (search.value) {
+    const q = search.value.toLowerCase()
+    list = list.filter(p => p.name.toLowerCase().includes(q))
+  }
+  return list
 })
 
 const filteredShared = computed(() => {
@@ -121,11 +134,15 @@ const filteredShared = computed(() => {
   return store.sharedProjects.filter(p => p.name.toLowerCase().includes(q))
 })
 
+async function refetchProjects() {
+  await store.fetchAll(showArchived.value)
+}
+
 async function fetchData() {
   loading.value = true
   try {
     await Promise.all([
-      store.fetchAll(),
+      store.fetchAll(showArchived.value),
       store.fetchSharedProjects(),
       fetchSamples(),
     ])
@@ -145,7 +162,7 @@ async function loadSample(sampleId) {
   loadingSample.value = true
   try {
     const { data } = await axios.post(`/api/samples/${sampleId}/load`)
-    await store.fetchAll()
+    await store.fetchAll(showArchived.value)
     store.selectedId = data.project_id
     openProject(data.project_id)
   } catch (e) {
@@ -171,12 +188,25 @@ function openProject(id) {
   router.push(`/project/${id}`)
 }
 
+async function handleArchive(project) {
+  try {
+    const result = await store.archiveProject(project.project_id)
+    if (!showArchived.value && result.archived) {
+      // Remove from visible list
+      store.projects = store.projects.filter(p => p.project_id !== project.project_id)
+      if (store.selectedId === project.project_id) store.selectedId = null
+    }
+  } catch (e) {
+    alert(t('projects.archiveFailed', { error: e.response?.data?.detail || e.message }))
+  }
+}
+
 async function handleDelete(project) {
-  if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return
+  if (!confirm(t('projects.deleteConfirm', { name: project.name }))) return
   try {
     await store.remove(project.project_id)
   } catch (e) {
-    alert('Delete failed: ' + (e.response?.data?.detail || e.message))
+    alert(t('projects.deleteFailed', { error: e.response?.data?.detail || e.message }))
   }
 }
 
@@ -268,6 +298,12 @@ onMounted(fetchData)
   cursor: not-allowed;
 }
 
+.filter-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
 .search-input {
   padding: 0.4rem 0.6rem;
   border: 1px solid var(--border-light);
@@ -276,6 +312,23 @@ onMounted(fetchData)
   background: var(--bg-input);
   color: var(--text-body);
   width: 100%;
+}
+
+.archive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+
+.archive-toggle input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.archive-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
 .section-label {

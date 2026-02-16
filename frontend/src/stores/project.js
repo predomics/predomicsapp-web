@@ -16,8 +16,10 @@ export const useProjectStore = defineStore('project', () => {
     method: 'wilcoxon',
   })
 
-  async function fetchAll() {
-    const { data } = await axios.get('/api/projects/')
+  async function fetchAll(includeArchived = false) {
+    const { data } = await axios.get('/api/projects/', {
+      params: { include_archived: includeArchived },
+    })
     projects.value = data
   }
 
@@ -58,6 +60,13 @@ export const useProjectStore = defineStore('project', () => {
     await fetchAll()
   }
 
+  async function archiveProject(id) {
+    const { data } = await axios.post(`/api/projects/${id}/archive`)
+    const idx = projects.value.findIndex(p => p.project_id === id)
+    if (idx >= 0) projects.value[idx] = data
+    return data
+  }
+
   function startJob(jobId) {
     activeJobId.value = jobId
     showConsole.value = true
@@ -71,6 +80,6 @@ export const useProjectStore = defineStore('project', () => {
     projects, sharedProjects, current, selectedId,
     activeJobId, showConsole, dataFilters,
     fetchAll, fetchSharedProjects, fetchOne, create, updateProject, remove,
-    startJob, closeConsole,
+    archiveProject, startJob, closeConsole,
   }
 })

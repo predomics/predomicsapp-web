@@ -35,6 +35,9 @@
       <div class="header-actions">
         <button class="btn btn-primary" @click="$emit('open', project.project_id)">Open Project</button>
         <button class="btn btn-outline" @click="$emit('share', project.project_id)">Share</button>
+        <button class="btn btn-outline" @click="$emit('archive', project)" :title="project.archived ? 'Unarchive' : 'Archive'">
+          {{ project.archived ? 'Unarchive' : 'Archive' }}
+        </button>
         <button class="btn btn-danger-outline" @click="$emit('delete', project)">Delete</button>
       </div>
     </div>
@@ -90,7 +93,7 @@ const props = defineProps({
   project: { type: Object, default: null },
 })
 
-defineEmits(['open', 'share', 'delete'])
+defineEmits(['open', 'share', 'archive', 'delete'])
 
 const store = useProjectStore()
 

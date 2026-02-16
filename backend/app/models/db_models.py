@@ -40,6 +40,7 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(String(500), default="")
     class_names: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -113,6 +114,7 @@ class Job(Base):
     batch_id: Mapped[Optional[str]] = mapped_column(String(12), nullable=True, index=True)
     best_auc: Mapped[Optional[float]] = mapped_column(nullable=True)
     best_k: Mapped[Optional[int]] = mapped_column(nullable=True)
+    scitq_task_id: Mapped[Optional[int]] = mapped_column(nullable=True)
 
     project: Mapped["Project"] = relationship(back_populates="jobs")
     owner: Mapped[Optional["User"]] = relationship()

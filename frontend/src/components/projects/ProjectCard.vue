@@ -1,7 +1,7 @@
 <template>
   <div
     class="project-card"
-    :class="{ selected, shared: isShared }"
+    :class="{ selected, shared: isShared, archived: project.archived }"
     @click="$emit('select')"
     @dblclick.stop="$emit('open')"
   >
@@ -75,6 +75,11 @@ function relativeDate(iso) {
 
 .project-card.shared {
   border-left: 3px solid var(--info);
+}
+
+.project-card.archived {
+  opacity: 0.55;
+  border-left: 3px solid var(--warning, #ff9800);
 }
 
 .card-top {
