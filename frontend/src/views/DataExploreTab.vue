@@ -2,9 +2,9 @@
   <div class="data-explore-tab">
     <!-- Sub-tabs -->
     <nav class="sub-tabs">
-      <button :class="{ active: subTab === 'summary' }" @click="subTab = 'summary'">Summary</button>
-      <button :class="{ active: subTab === 'features' }" @click="subTab = 'features'">Features</button>
-      <button :class="{ active: subTab === 'visualizations' }" @click="subTab = 'visualizations'">Visualizations</button>
+      <button :class="{ active: subTab === 'summary' }" @click="subTab = 'summary'">{{ $t('dataExplore.summary') }}</button>
+      <button :class="{ active: subTab === 'features' }" @click="subTab = 'features'">{{ $t('dataExplore.features') }}</button>
+      <button :class="{ active: subTab === 'visualizations' }" @click="subTab = 'visualizations'">{{ $t('dataExplore.visualizations') }}</button>
     </nav>
 
     <!-- ====== SUMMARY SUB-TAB ====== -->
@@ -12,30 +12,30 @@
       <div v-if="summary" class="summary-grid">
         <div class="stat-card">
           <div class="stat-value">{{ summary.n_features }}</div>
-          <div class="stat-label">Total Features</div>
+          <div class="stat-label">{{ $t('dataExplore.totalFeatures') }}</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">{{ summary.n_samples }}</div>
-          <div class="stat-label">Samples</div>
+          <div class="stat-label">{{ $t('dataExplore.samples') }}</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">{{ summary.n_classes }}</div>
-          <div class="stat-label">Classes</div>
+          <div class="stat-label">{{ $t('dataExplore.classes') }}</div>
         </div>
         <div class="stat-card" v-if="featureStats">
           <div class="stat-value accent">{{ featureStats.selected_count }}</div>
-          <div class="stat-label">Selected Features</div>
+          <div class="stat-label">{{ $t('dataExplore.selectedFeatures') }}</div>
         </div>
       </div>
 
       <!-- Class distribution bar chart -->
       <section class="section" v-if="summary">
-        <h3>Class Distribution</h3>
+        <h3>{{ $t('dataExplore.classDistribution') }}</h3>
         <div ref="classDistChartEl" class="plotly-chart"></div>
       </section>
 
       <div v-if="!summary && !loading" class="empty">
-        No training data found. Upload datasets in the Data &amp; Run tab first.
+        {{ $t('dataExplore.noTrainingData') }}
       </div>
     </div>
 
@@ -44,30 +44,30 @@
       <!-- Filter controls -->
       <div class="filter-bar">
         <label class="filter-item">
-          <span>Method</span>
+          <span>{{ $t('dataExplore.method') }}</span>
           <select v-model="filterMethod" @change="loadFeatureStats">
-            <option value="wilcoxon">Wilcoxon</option>
-            <option value="studentt">Student t-test</option>
-            <option value="bayesian_fisher">Bayesian Fisher</option>
+            <option value="wilcoxon">{{ $t('dataExplore.wilcoxon') }}</option>
+            <option value="studentt">{{ $t('dataExplore.studentTTest') }}</option>
+            <option value="bayesian_fisher">{{ $t('dataExplore.bayesianFisher') }}</option>
           </select>
         </label>
         <label class="filter-item">
-          <span>Min prevalence (%)</span>
+          <span>{{ $t('dataExplore.minPrevalence') }}</span>
           <input type="number" v-model.number="filterPrevalence" min="0" max="100" step="1" @change="loadFeatureStats" />
         </label>
         <label class="filter-item">
-          <span>Max adj. p-value</span>
+          <span>{{ $t('dataExplore.maxPValue') }}</span>
           <input type="number" v-model.number="filterPvalue" min="0" max="1" step="0.01" @change="loadFeatureStats" />
         </label>
         <label class="filter-item">
-          <span>Min feature value</span>
+          <span>{{ $t('dataExplore.minFeatureValue') }}</span>
           <input type="number" v-model.number="filterMinValue" min="0" step="0.0001" @change="loadFeatureStats" />
         </label>
       </div>
 
       <!-- Selected count -->
       <div v-if="featureStats" class="selection-info">
-        <strong>{{ featureStats.selected_count }}</strong> / {{ featureStats.n_features }} features selected
+        <strong>{{ featureStats.selected_count }}</strong> / {{ featureStats.n_features }} {{ $t('dataExplore.featuresSelected') }}
         ({{ filterMethod }}, p &lt; {{ filterPvalue }})
       </div>
 
@@ -77,25 +77,25 @@
           <thead>
             <tr>
               <th class="sortable" @click="sortBy('name')">
-                Name {{ sortIcon('name') }}
+                {{ $t('dataExplore.name') }} {{ sortIcon('name') }}
               </th>
               <th class="sortable" @click="sortBy('class')">
-                Class {{ sortIcon('class') }}
+                {{ $t('dataExplore.class') }} {{ sortIcon('class') }}
               </th>
               <th class="sortable" @click="sortBy('significance')">
-                Significance {{ sortIcon('significance') }}
+                {{ $t('dataExplore.significance') }} {{ sortIcon('significance') }}
               </th>
               <th class="sortable" @click="sortBy('prevalence_0')">
-                Prev(0) % {{ sortIcon('prevalence_0') }}
+                {{ $t('dataExplore.prev0') }} {{ sortIcon('prevalence_0') }}
               </th>
               <th class="sortable" @click="sortBy('prevalence_1')">
-                Prev(1) % {{ sortIcon('prevalence_1') }}
+                {{ $t('dataExplore.prev1') }} {{ sortIcon('prevalence_1') }}
               </th>
               <th class="sortable" @click="sortBy('mean_0')">
-                Mean(0) {{ sortIcon('mean_0') }}
+                {{ $t('dataExplore.mean0') }} {{ sortIcon('mean_0') }}
               </th>
               <th class="sortable" @click="sortBy('mean_1')">
-                Mean(1) {{ sortIcon('mean_1') }}
+                {{ $t('dataExplore.mean1') }} {{ sortIcon('mean_1') }}
               </th>
             </tr>
           </thead>
@@ -107,7 +107,7 @@
               @click="selectFeature(f)"
             >
               <td class="feature-name-cell">{{ f.name }}</td>
-              <td>{{ f.class === 0 ? 'Class 0' : f.class === 1 ? 'Class 1' : '—' }}</td>
+              <td>{{ f.class === 0 ? $t('dataExplore.class') + ' 0' : f.class === 1 ? $t('dataExplore.class') + ' 1' : '—' }}</td>
               <td>{{ f.significance != null ? f.significance.toExponential(2) : '—' }}</td>
               <td>{{ f.prevalence_0 != null ? f.prevalence_0.toFixed(1) : '—' }}</td>
               <td>{{ f.prevalence_1 != null ? f.prevalence_1.toFixed(1) : '—' }}</td>
@@ -119,22 +119,22 @@
 
         <!-- Pagination -->
         <div class="pagination" v-if="sortedFeatures.length > featPageSize">
-          <button @click="featPage = Math.max(0, featPage - 1)" :disabled="featPage === 0">&laquo; Prev</button>
-          <span>Page {{ featPage + 1 }} / {{ Math.ceil(sortedFeatures.length / featPageSize) }}</span>
-          <button @click="featPage++" :disabled="(featPage + 1) * featPageSize >= sortedFeatures.length">Next &raquo;</button>
+          <button @click="featPage = Math.max(0, featPage - 1)" :disabled="featPage === 0">&laquo; {{ $t('dataExplore.prev') }}</button>
+          <span>{{ $t('dataExplore.page') }} {{ featPage + 1 }} / {{ Math.ceil(sortedFeatures.length / featPageSize) }}</span>
+          <button @click="featPage++" :disabled="(featPage + 1) * featPageSize >= sortedFeatures.length">{{ $t('dataExplore.next') }} &raquo;</button>
         </div>
       </div>
 
       <!-- Feature abundance boxplot (click a feature) -->
       <section class="section" v-if="selectedFeatures.length > 0">
         <h3>
-          Feature Abundance
-          <button class="clear-selection-btn" @click="selectedFeatures = []">Clear</button>
+          {{ $t('dataExplore.featureAbundance') }}
+          <button class="clear-selection-btn" @click="selectedFeatures = []">{{ $t('dataExplore.clear') }}</button>
         </h3>
         <div ref="abundanceChartEl" class="plotly-chart plotly-chart-tall"></div>
       </section>
 
-      <div v-if="loadingFeatures" class="loading">Loading feature statistics...</div>
+      <div v-if="loadingFeatures" class="loading">{{ $t('dataExplore.loadingStats') }}</div>
     </div>
 
     <!-- ====== VISUALIZATIONS SUB-TAB ====== -->
@@ -142,28 +142,28 @@
       <div v-if="distributions">
         <div class="charts-grid">
           <section class="section">
-            <h3>Prevalence Distribution</h3>
+            <h3>{{ $t('dataExplore.prevalenceDistribution') }}</h3>
             <div ref="prevHistChartEl" class="plotly-chart"></div>
           </section>
           <section class="section">
-            <h3>Standard Deviation Distribution</h3>
+            <h3>{{ $t('dataExplore.stdDevDistribution') }}</h3>
             <div ref="sdHistChartEl" class="plotly-chart"></div>
           </section>
         </div>
 
         <section class="section" v-if="featureStats">
-          <h3>Volcano Plot</h3>
+          <h3>{{ $t('dataExplore.volcanoPlot') }}</h3>
           <div ref="volcanoChartEl" class="plotly-chart plotly-chart-tall"></div>
         </section>
       </div>
 
       <div v-if="!distributions && !loading" class="empty">
-        No training data found. Upload datasets in the Data &amp; Run tab first.
+        {{ $t('dataExplore.noTrainingData') }}
       </div>
     </div>
 
     <!-- Global loading -->
-    <div v-if="loading && !featureStats" class="loading">Loading data exploration...</div>
+    <div v-if="loading && !featureStats" class="loading">{{ $t('dataExplore.loadingExplore') }}</div>
   </div>
 </template>
 
@@ -174,10 +174,12 @@ import { useProjectStore } from '../stores/project'
 import { useThemeStore } from '../stores/theme'
 import axios from 'axios'
 import Plotly from 'plotly.js-dist-min'
+import { useI18n } from 'vue-i18n'
 
 const route = useRoute()
 const store = useProjectStore()
 const themeStore = useThemeStore()
+const { t } = useI18n()
 
 // State
 const loading = ref(false)

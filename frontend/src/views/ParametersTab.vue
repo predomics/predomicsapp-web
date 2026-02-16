@@ -3,9 +3,9 @@
     <form @submit.prevent="batchMode ? launchBatch() : launch()" novalidate>
       <!-- Template loader -->
       <div class="template-bar" v-if="templates.length > 0">
-        <label class="template-label">Load Template:</label>
+        <label class="template-label">{{ $t('parameters.loadTemplate') }}</label>
         <select v-model="selectedTemplate" @change="applyTemplate" class="template-select">
-          <option value="">— Select a template —</option>
+          <option value="">{{ $t('parameters.selectTemplate') }}</option>
           <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
         </select>
         <span v-if="templateMsg" class="template-msg">{{ templateMsg }}</span>
@@ -25,12 +25,12 @@
 
           <!-- Data filtering summary (read-only, not from parameterDefs) -->
           <section class="section info-section">
-            <div class="section-title">Data Filtering</div>
-            <div class="info-row"><span class="info-label">Method:</span> {{ cfg.data.feature_selection_method }}</div>
-            <div class="info-row"><span class="info-label">Min prevalence:</span> {{ cfg.data.feature_minimal_prevalence_pct }}%</div>
-            <div class="info-row"><span class="info-label">Max p-value:</span> {{ cfg.data.feature_maximal_adj_pvalue }}</div>
-            <div class="info-row"><span class="info-label">Holdout ratio:</span> {{ cfg.data.holdout_ratio }}</div>
-            <router-link :to="`/project/${route.params.id}/data`" class="edit-link">Edit in Data tab</router-link>
+            <div class="section-title">{{ $t('parameters.dataFiltering') }}</div>
+            <div class="info-row"><span class="info-label">{{ $t('parameters.method') }}</span> {{ cfg.data.feature_selection_method }}</div>
+            <div class="info-row"><span class="info-label">{{ $t('parameters.minPrevalence') }}</span> {{ cfg.data.feature_minimal_prevalence_pct }}%</div>
+            <div class="info-row"><span class="info-label">{{ $t('parameters.maxPValue') }}</span> {{ cfg.data.feature_maximal_adj_pvalue }}</div>
+            <div class="info-row"><span class="info-label">{{ $t('parameters.holdoutRatio') }}</span> {{ cfg.data.holdout_ratio }}</div>
+            <router-link :to="`/project/${route.params.id}/data`" class="edit-link">{{ $t('parameters.editInDataTab') }}</router-link>
           </section>
         </div>
 
@@ -51,8 +51,8 @@
       <div class="batch-section">
         <label class="batch-toggle">
           <input type="checkbox" v-model="batchMode" />
-          <span class="batch-toggle-label">Batch Mode</span>
-          <span class="batch-toggle-hint">Sweep parameters across multiple runs</span>
+          <span class="batch-toggle-label">{{ $t('parameters.batchMode') }}</span>
+          <span class="batch-toggle-hint">{{ $t('parameters.batchDesc') }}</span>
         </label>
 
         <div v-if="batchMode" class="batch-grid">
@@ -69,12 +69,12 @@
               :title="sp.help"
             />
             <span v-if="sweeps[sp.key]?.enabled" class="sweep-count">
-              {{ parseSweepValues(sweeps[sp.key].values).length }} values
+              {{ parseSweepValues(sweeps[sp.key].values).length }} {{ $t('parameters.values') }}
             </span>
           </div>
           <div class="sweep-summary" v-if="batchJobCount > 0">
-            Will launch <strong>{{ batchJobCount }}</strong> job{{ batchJobCount !== 1 ? 's' : '' }}
-            <span v-if="batchJobCount > 50" class="sweep-warn">(max 50)</span>
+            {{ $t('parameters.willLaunch') }} <strong>{{ batchJobCount }}</strong> {{ $t('parameters.jobsCount') }}
+            <span v-if="batchJobCount > 50" class="sweep-warn">{{ $t('parameters.maxJobs') }}</span>
           </div>
         </div>
       </div>
@@ -82,7 +82,7 @@
       <!-- Job name + Launch bar -->
       <div class="launch-bar">
         <div class="job-name-row" v-if="!batchMode">
-          <label class="job-name-label">Job name</label>
+          <label class="job-name-label">{{ $t('parameters.jobName') }}</label>
           <input
             v-model="jobName"
             type="text"
@@ -90,14 +90,14 @@
             :placeholder="autoJobName"
             maxlength="255"
           />
-          <button type="button" class="btn btn-auto-name" @click="jobName = autoJobName" title="Generate from parameters">Auto</button>
+          <button type="button" class="btn btn-auto-name" @click="jobName = autoJobName" title="Generate from parameters">{{ $t('parameters.auto') }}</button>
         </div>
         <div class="launch-actions">
           <button type="submit" class="btn btn-launch" :disabled="launching || !canLaunch || (batchMode && (batchJobCount === 0 || batchJobCount > 50))">
-            {{ launching ? 'Launching...' : (batchMode ? `Launch ${batchJobCount} Jobs` : 'Launch Analysis') }}
+            {{ launching ? $t('parameters.launching') : (batchMode ? $t('parameters.launchJobs', { n: batchJobCount }) : $t('parameters.launchAnalysis')) }}
           </button>
-          <button type="button" class="btn btn-reset" @click="configStore.resetToDefaults()">Reset defaults</button>
-          <span v-if="!canLaunch" class="launch-hint">Upload X and y training datasets in the Data tab first</span>
+          <button type="button" class="btn btn-reset" @click="configStore.resetToDefaults()">{{ $t('parameters.resetDefaults') }}</button>
+          <span v-if="!canLaunch" class="launch-hint">{{ $t('parameters.uploadFirst') }}</span>
         </div>
       </div>
 
@@ -118,6 +118,7 @@ import { useConfigStore } from '../stores/config'
 import { CATEGORIES, PARAM_DEFS } from '../data/parameterDefs'
 import ParamSection from '../components/ParamSection.vue'
 import axios from 'axios'
+import { useI18n } from 'vue-i18n'
 
 const route = useRoute()
 const store = useProjectStore()
@@ -127,6 +128,7 @@ const launching = ref(false)
 const jobName = ref('')
 const batchMode = ref(false)
 const batchResult = ref(null)
+const { t } = useI18n()
 
 // Templates
 const templates = ref([])
