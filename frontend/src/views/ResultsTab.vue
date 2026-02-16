@@ -638,15 +638,23 @@
       <section class="section" v-if="copresencePopulation.length > 1">
         <h3>Feature Co-occurrence Matrix</h3>
         <p class="info-text" style="margin-bottom: 0.5rem;">
-          Ratio of observed to expected co-occurrence. Values &gt; 1 (red) indicate features that co-occur more often than expected;
-          values &lt; 1 (blue) indicate mutual exclusion.
+          Ratio of observed to expected co-occurrence. Higher values (yellow) indicate features that co-occur more often than expected;
+          lower values (purple) indicate mutual exclusion.
         </p>
         <div ref="copresenceHeatmapEl" class="plotly-chart"></div>
       </section>
 
       <!-- Co-occurrence network -->
       <section class="section" v-if="copresencePopulation.length > 1">
-        <h3>Co-occurrence Network</h3>
+        <div class="network-header">
+          <h3>Co-occurrence Network</h3>
+          <div class="layout-selector">
+            <label v-for="opt in networkLayoutOptions" :key="opt.value" class="layout-option" :class="{ active: networkLayout === opt.value }">
+              <input type="radio" :value="opt.value" v-model="networkLayout" />
+              {{ opt.label }}
+            </label>
+          </div>
+        </div>
         <p class="info-text" style="margin-bottom: 0.5rem;">
           Nodes sized by prevalence. Edges connect features that co-occur significantly more (green)
           or less (red dashed) than expected. Edge width = strength of association.
@@ -809,6 +817,13 @@ const copresenceFBM = ref(true)
 const copresenceMinPrev = ref(2)
 const copresencePage = ref(0)
 const copresencePageSize = 20
+const networkLayout = ref('force')
+const networkLayoutOptions = [
+  { value: 'force', label: 'Force-directed' },
+  { value: 'circle', label: 'Circle' },
+  { value: 'grid', label: 'Grid' },
+  { value: 'radial', label: 'Radial' },
+]
 
 // ---------------------------------------------------------------------------
 // Computed
@@ -2066,7 +2081,7 @@ async function renderCopresenceHeatmap() {
   const c = chartColors()
   const labels = features.map(n => featureLabel(n))
 
-  // Determine max ratio for symmetric colorscale
+  // Cap max ratio for readability
   let maxRatio = 2
   for (let i = 0; i < features.length; i++) {
     for (let j = 0; j < features.length; j++) {
@@ -2075,16 +2090,7 @@ async function renderCopresenceHeatmap() {
       }
     }
   }
-  maxRatio = Math.min(maxRatio, 5) // cap at 5 for readability
-
-  // Blue (exclusion) → white (independent) → red (co-occurrence)
-  const colorscale = [
-    [0, 'rgba(0, 100, 200, 0.7)'],
-    [0.5 / maxRatio, 'rgba(0, 100, 200, 0.3)'],
-    [1 / maxRatio, c.paper],
-    [(1 + maxRatio) / (2 * maxRatio), 'rgba(200, 50, 50, 0.3)'],
-    [1, 'rgba(200, 50, 50, 0.7)'],
-  ]
+  maxRatio = Math.min(maxRatio, 5)
 
   // Cap matrix values for display
   const displayMatrix = matrix.map(row => row.map(v => Math.min(isFinite(v) ? v : maxRatio, maxRatio)))
@@ -2096,7 +2102,7 @@ async function renderCopresenceHeatmap() {
     z: displayMatrix,
     x: labels,
     y: labels,
-    colorscale,
+    colorscale: 'Viridis',
     zmin: 0,
     zmax: maxRatio,
     showscale: true,
@@ -2117,26 +2123,64 @@ async function renderCopresenceHeatmap() {
   }), { responsive: true, displayModeBar: true })
 }
 
-async function renderCopresenceNetwork() {
-  await nextTick()
-  if (!copresenceNetworkEl.value) return
-  const { features, prevalence, pairs } = copresenceData.value
-  if (features.length < 2 || pairs.length === 0) return
+// --- Network layout algorithms ---
+function layoutCircle(nNodes) {
+  const x = [], y = []
+  for (let i = 0; i < nNodes; i++) {
+    x.push(Math.cos(2 * Math.PI * i / nNodes) * 100)
+    y.push(Math.sin(2 * Math.PI * i / nNodes) * 100)
+  }
+  return { x, y }
+}
 
-  const c = chartColors()
-  const N = copresencePopulation.value.length
+function layoutGrid(nNodes) {
+  const cols = Math.ceil(Math.sqrt(nNodes))
+  const x = [], y = []
+  for (let i = 0; i < nNodes; i++) {
+    x.push((i % cols) * 40)
+    y.push(Math.floor(i / cols) * 40)
+  }
+  return { x, y }
+}
 
-  // Simple force-directed layout using feature indices
-  // Place nodes in a circle, then adjust based on connections
-  const nNodes = features.length
-  const nodeX = features.map((_, i) => Math.cos(2 * Math.PI * i / nNodes) * 100)
-  const nodeY = features.map((_, i) => Math.sin(2 * Math.PI * i / nNodes) * 100)
+function layoutRadial(nNodes, prevalence, features) {
+  // High-prevalence nodes in center, low-prevalence on outer rings
+  const maxPrev = Math.max(...features.map(f => prevalence[f]))
+  const sorted = features
+    .map((f, i) => ({ i, prev: prevalence[f] }))
+    .sort((a, b) => b.prev - a.prev)
 
-  // Simple spring-force iterations to improve layout
+  const x = new Array(nNodes).fill(0)
+  const y = new Array(nNodes).fill(0)
+
+  // Place most prevalent node at center
+  x[sorted[0].i] = 0
+  y[sorted[0].i] = 0
+
+  // Distribute others in concentric rings
+  let ring = 1, placed = 1
+  while (placed < nNodes) {
+    const ringCapacity = Math.max(1, Math.floor(6 * ring))
+    const radius = ring * 50
+    for (let k = 0; k < ringCapacity && placed < nNodes; k++, placed++) {
+      const angle = (2 * Math.PI * k) / ringCapacity
+      x[sorted[placed].i] = Math.cos(angle) * radius
+      y[sorted[placed].i] = Math.sin(angle) * radius
+    }
+    ring++
+  }
+  return { x, y }
+}
+
+function layoutForceDirected(nNodes, features, prevalence, pairs) {
+  // Start from circle
+  const pos = layoutCircle(nNodes)
+  const nodeX = pos.x, nodeY = pos.y
+
   const featureIdx = {}
   features.forEach((f, i) => { featureIdx[f] = i })
 
-  for (let iter = 0; iter < 60; iter++) {
+  for (let iter = 0; iter < 80; iter++) {
     const fx = new Array(nNodes).fill(0)
     const fy = new Array(nNodes).fill(0)
 
@@ -2154,7 +2198,7 @@ async function renderCopresenceNetwork() {
       }
     }
 
-    // Attraction along edges (positive co-occurrence)
+    // Attraction/repulsion along edges
     for (const pair of pairs) {
       const i = featureIdx[pair.f1]
       const j = featureIdx[pair.f2]
@@ -2170,15 +2214,48 @@ async function renderCopresenceNetwork() {
       fy[j] -= force * dy / dist
     }
 
-    // Apply forces with damping
     const damping = 0.8 / (1 + iter * 0.05)
     for (let i = 0; i < nNodes; i++) {
       nodeX[i] += fx[i] * damping
       nodeY[i] += fy[i] * damping
     }
   }
+  return { x: nodeX, y: nodeY }
+}
 
-  // Draw edges as individual traces
+async function renderCopresenceNetwork() {
+  await nextTick()
+  if (!copresenceNetworkEl.value) return
+  const { features, prevalence, pairs } = copresenceData.value
+  if (features.length < 2 || pairs.length === 0) return
+
+  const c = chartColors()
+  const N = copresencePopulation.value.length
+  const nNodes = features.length
+
+  // Compute layout based on selected algorithm
+  let pos
+  switch (networkLayout.value) {
+    case 'circle':
+      pos = layoutCircle(nNodes)
+      break
+    case 'grid':
+      pos = layoutGrid(nNodes)
+      break
+    case 'radial':
+      pos = layoutRadial(nNodes, prevalence, features)
+      break
+    case 'force':
+    default:
+      pos = layoutForceDirected(nNodes, features, prevalence, pairs)
+      break
+  }
+  const nodeX = pos.x, nodeY = pos.y
+
+  const featureIdx = {}
+  features.forEach((f, i) => { featureIdx[f] = i })
+
+  // Draw edges
   const edgeTraces = []
   for (const pair of pairs) {
     const i = featureIdx[pair.f1]
@@ -2225,7 +2302,7 @@ async function renderCopresenceNetwork() {
   Plotly.newPlot(copresenceNetworkEl.value, [...edgeTraces, nodeTrace], chartLayout({
     xaxis: { visible: false, showgrid: false, zeroline: false },
     yaxis: { visible: false, showgrid: false, zeroline: false, scaleanchor: 'x' },
-    height: 500,
+    height: 550,
     margin: { t: 20, b: 20, l: 20, r: 20 },
     hovermode: 'closest',
   }), { responsive: true, displayModeBar: false })
@@ -2674,6 +2751,9 @@ function debouncedCopresenceRender() {
 }
 watch(copresenceFBM, debouncedCopresenceRender)
 watch(copresenceMinPrev, debouncedCopresenceRender)
+watch(networkLayout, () => {
+  if (subTab.value === 'copresence') renderCopresenceNetwork()
+})
 
 // Load compare data when selection changes
 watch(compareJobIds, async () => {
@@ -3454,6 +3534,42 @@ onMounted(loadJobList)
   border-top: 1px solid var(--border-light);
   margin: 0.25rem 0;
 }
+
+/* Co-presence network header */
+.network-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.network-header h3 { margin: 0; }
+
+.layout-selector {
+  display: flex;
+  gap: 0.25rem;
+}
+.layout-option {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+.layout-option input[type="radio"] { display: none; }
+.layout-option.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-primary);
+}
+.layout-option:hover { border-color: var(--accent); }
 
 /* Co-presence badges */
 .cooccur-type {
