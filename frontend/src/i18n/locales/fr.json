@@ -62,7 +62,13 @@
     "api": "API",
     "engine": "Moteur",
     "ready": "prêt",
-    "mockMode": "mode simulation"
+    "mockMode": "mode simulation",
+    "learnMore": "En savoir plus",
+    "howItWorksDesc": "Des données brutes aux modèles prédictifs validés en cinq étapes.",
+    "startAnalyzing": "Commencez à analyser vos données en quelques minutes",
+    "startNow": "Commencer maintenant",
+    "openSource": "Open Source",
+    "openSourceDesc": "Licence GPL-3.0. Inspectez, étendez et contribuez au code source."
   },
   "login": {
     "title": "PredomicsApp",

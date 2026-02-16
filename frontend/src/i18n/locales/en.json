@@ -62,7 +62,13 @@
     "api": "API",
     "engine": "Engine",
     "ready": "ready",
-    "mockMode": "mock mode"
+    "mockMode": "mock mode",
+    "learnMore": "Learn More",
+    "howItWorksDesc": "From raw data to validated predictive models in five steps.",
+    "startAnalyzing": "Start analyzing your data in minutes",
+    "startNow": "Start Now",
+    "openSource": "Open Source",
+    "openSourceDesc": "GPL-3.0 licensed. Inspect, extend, and contribute to the codebase."
   },
   "login": {
     "title": "PredomicsApp",

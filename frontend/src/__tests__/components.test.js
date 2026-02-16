@@ -13,6 +13,13 @@ vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
   removeEventListener: vi.fn(),
 }))
 
+// Mock IntersectionObserver for HomeView scroll reveal
+vi.stubGlobal('IntersectionObserver', class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+})
+
 describe('EmptyState', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -136,6 +143,7 @@ describe('HomeView', () => {
     const { default: HomeView } = await import('../views/HomeView.vue')
     const wrapper = mount(HomeView, {
       global: {
+        plugins: [i18n],
         stubs: { 'router-link': true },
       },
     })
@@ -148,6 +156,7 @@ describe('HomeView', () => {
     const { default: HomeView } = await import('../views/HomeView.vue')
     const wrapper = mount(HomeView, {
       global: {
+        plugins: [i18n],
         stubs: { 'router-link': true },
       },
     })
@@ -160,6 +169,7 @@ describe('HomeView', () => {
     const { default: HomeView } = await import('../views/HomeView.vue')
     const wrapper = mount(HomeView, {
       global: {
+        plugins: [i18n],
         stubs: { 'router-link': true },
       },
     })
@@ -173,6 +183,7 @@ describe('HomeView', () => {
     const { default: HomeView } = await import('../views/HomeView.vue')
     const wrapper = mount(HomeView, {
       global: {
+        plugins: [i18n],
         stubs: { 'router-link': true },
       },
     })
