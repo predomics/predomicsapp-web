@@ -14,8 +14,31 @@
           <div class="progress-bar" :style="{ width: progressPct + '%' }"></div>
         </div>
       </template>
+      <button class="btn-toggle-chart" v-if="progressPoints.length >= 2" @click="showChart = !showChart" :title="showChart ? 'Hide chart' : 'Show live chart'">
+        <svg width="14" height="14" viewBox="0 0 14 14"><path d="M1 12 L4 7 L7 9 L10 3 L13 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <button class="close-btn" @click="$emit('close')" title="Minimize console">&#9660;</button>
     </div>
+
+    <!-- Live sparkline charts -->
+    <div v-if="showChart && progressPoints.length >= 2" class="chart-strip">
+      <svg :viewBox="`0 0 ${chartW} ${chartH}`" class="sparkline-svg" preserveAspectRatio="none">
+        <!-- Grid lines -->
+        <line x1="0" :y1="chartH * 0.25" :x2="chartW" :y2="chartH * 0.25" stroke="rgba(255,255,255,0.06)" stroke-width="0.5" />
+        <line x1="0" :y1="chartH * 0.5" :x2="chartW" :y2="chartH * 0.5" stroke="rgba(255,255,255,0.06)" stroke-width="0.5" />
+        <line x1="0" :y1="chartH * 0.75" :x2="chartW" :y2="chartH * 0.75" stroke="rgba(255,255,255,0.06)" stroke-width="0.5" />
+        <!-- Generation line (cyan) -->
+        <polyline :points="genPath" fill="none" stroke="#00BFFF" stroke-width="1.5" stroke-linejoin="round" />
+        <!-- k line (green) -->
+        <polyline :points="kPath" fill="none" stroke="#98c379" stroke-width="1.5" stroke-linejoin="round" stroke-dasharray="3,2" />
+      </svg>
+      <div class="chart-legend">
+        <span class="legend-gen">&#9644; Generation</span>
+        <span class="legend-k">&#9644; k (features)</span>
+        <span class="legend-max" v-if="progress.maxGen">max={{ progress.maxGen }}</span>
+      </div>
+    </div>
+
     <div class="console" ref="consoleEl">
       <pre v-html="renderedLog"></pre>
     </div>
@@ -40,12 +63,40 @@ const logContent = ref('')
 const jobStatus = ref('pending')
 const consoleEl = ref(null)
 const progress = ref({ generation: 0, maxGen: 0, k: 0, language: '' })
+const progressPoints = ref([])
+const showChart = ref(true)
 let pollTimer = null
 let ws = null
 let wsConnected = false
 
 let errorCount = 0
 let startTime = null  // When we first see generation > 0
+
+/* ── Sparkline chart ─────────────────────────────────── */
+const chartW = 300
+const chartH = 60
+
+function buildPath(points, key, maxVal) {
+  if (points.length < 2 || maxVal <= 0) return ''
+  const xStep = chartW / (points.length - 1)
+  return points.map((p, i) => {
+    const x = i * xStep
+    const y = chartH - (p[key] / maxVal) * (chartH - 4) - 2
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+}
+
+const genPath = computed(() => {
+  const pts = progressPoints.value
+  const maxGen = progress.value.maxGen || Math.max(...pts.map(p => p.generation), 1)
+  return buildPath(pts, 'generation', maxGen)
+})
+
+const kPath = computed(() => {
+  const pts = progressPoints.value
+  const maxK = Math.max(...pts.map(p => p.k), 1)
+  return buildPath(pts, 'k', maxK)
+})
 
 /* ── Progress parser ─────────────────────────────────── */
 // Parses generation lines like: "#42      | best: Ternary:Prevalence  \t0 ████ 1 [k=55, age=0]"
@@ -86,6 +137,20 @@ function parseProgress(text) {
   }
   // Emit progress data to parent for minimized bar display
   emitProgress()
+}
+
+/* ── Handle structured progress from backend ─────────── */
+function handleProgressData(data) {
+  if (data.max_gen) progress.value.maxGen = data.max_gen
+  if (data.points?.length > 0) {
+    progressPoints.value = data.points
+    const last = data.points[data.points.length - 1]
+    progress.value.generation = last.generation
+    progress.value.k = last.k
+    progress.value.language = last.language
+    if (!startTime && last.generation > 0) startTime = Date.now()
+    emitProgress()
+  }
 }
 
 /* ── ETA calculation ─────────────────────────────────── */
@@ -196,6 +261,8 @@ function connectWebSocket() {
         })
       } else if (msg.type === 'status') {
         jobStatus.value = msg.status
+      } else if (msg.type === 'progress') {
+        handleProgressData(msg.data)
       } else if (msg.type === 'done') {
         jobStatus.value = msg.status
         if (msg.status === 'completed') emit('completed', props.jobId)
@@ -257,11 +324,19 @@ async function pollLogs() {
   }
 }
 
+async function pollProgress() {
+  try {
+    const { data } = await axios.get(`/api/analysis/${props.projectId}/jobs/${props.jobId}/progress`)
+    if (data.points?.length > 0) handleProgressData(data)
+  } catch { /* ignore */ }
+}
+
 function startPolling() {
   if (pollTimer) return  // Already polling
   fetchMaxEpochs()
   pollLogs()
-  pollTimer = setInterval(pollLogs, 1000)
+  pollProgress()
+  pollTimer = setInterval(() => { pollLogs(); pollProgress() }, 1000)
 }
 
 function stopPolling() {
@@ -290,6 +365,7 @@ watch(() => props.jobId, (newId) => {
     logContent.value = ''
     jobStatus.value = 'pending'
     progress.value = { generation: 0, maxGen: 0, k: 0, language: '' }
+    progressPoints.value = []
     startTime = null
     stopConsole()
     startConsole()
@@ -350,6 +426,22 @@ onUnmounted(stopConsole)
 
 .close-btn:hover { color: var(--console-text); }
 
+.btn-toggle-chart {
+  background: none;
+  border: 1px solid rgba(255,255,255,0.15);
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  transition: all 0.15s;
+}
+.btn-toggle-chart:hover {
+  border-color: #00BFFF;
+  color: #00BFFF;
+}
+
 /* Progress indicators */
 .progress-info {
   display: flex;
@@ -388,6 +480,29 @@ onUnmounted(stopConsole)
   border-radius: 3px;
   transition: width 0.3s ease;
 }
+
+/* Live sparkline chart strip */
+.chart-strip {
+  padding: 0.4rem 1rem 0.25rem;
+  border-bottom: 1px solid var(--console-border);
+  flex-shrink: 0;
+}
+
+.sparkline-svg {
+  width: 100%;
+  height: 50px;
+  display: block;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.62rem;
+  padding-top: 0.15rem;
+}
+.legend-gen { color: #00BFFF; }
+.legend-k { color: #98c379; }
+.legend-max { color: var(--text-muted); margin-left: auto; }
 
 .console {
   flex: 1;

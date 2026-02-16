@@ -1,6 +1,7 @@
 """WebSocket endpoint for live job log streaming."""
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -71,9 +72,12 @@ async def job_log_ws(
 
     await websocket.accept()
 
-    log_path = Path(settings.project_dir) / project_id / "jobs" / job_id / "console.log"
+    job_dir = Path(settings.project_dir) / project_id / "jobs" / job_id
+    log_path = job_dir / "console.log"
+    progress_path = job_dir / "progress.json"
     last_size = 0
     last_status = None
+    last_progress_size = 0
 
     try:
         while True:
@@ -110,6 +114,20 @@ async def job_log_ws(
                             "content": new_content,
                         })
                     last_size = current_size
+
+            # Stream structured progress metrics
+            if progress_path.exists():
+                try:
+                    p_size = progress_path.stat().st_size
+                    if p_size != last_progress_size:
+                        progress_data = json.loads(progress_path.read_text())
+                        await websocket.send_json({
+                            "type": "progress",
+                            "data": progress_data,
+                        })
+                        last_progress_size = p_size
+                except Exception:
+                    pass
 
             # Stop on terminal state
             if current_status in ("completed", "failed"):
