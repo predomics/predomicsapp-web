@@ -984,6 +984,68 @@ async def _migrate_add_dataset_metadata(conn):
     _log.info("Migration v21_dataset_data_meta complete")
 
 
+async def _migrate_add_scitq_task_id(conn):
+    """v22: Add scitq_task_id column to jobs for distributed task queue integration."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v22_scitq_task_id'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+
+    _log.info("Migration v22: scitq_task_id — starting")
+    try:
+        r = await conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'jobs' AND column_name = 'scitq_task_id'"
+        ))
+        if not r.scalar():
+            await conn.execute(text(
+                "ALTER TABLE jobs ADD COLUMN scitq_task_id INTEGER"
+            ))
+            _log.info("  Added jobs.scitq_task_id column")
+    except Exception:
+        pass
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v22_scitq_task_id', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v22_scitq_task_id complete")
+
+
+async def _migrate_add_project_archived(conn):
+    """v23: Add archived boolean column to projects."""
+    try:
+        r = await conn.execute(
+            text("SELECT 1 FROM schema_versions WHERE version = 'v23_project_archived'")
+        )
+        if r.scalar():
+            return
+    except Exception:
+        pass
+
+    _log.info("Migration v23: project archived — starting")
+    try:
+        r = await conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'projects' AND column_name = 'archived'"
+        ))
+        if not r.scalar():
+            await conn.execute(text(
+                "ALTER TABLE projects ADD COLUMN archived BOOLEAN DEFAULT FALSE"
+            ))
+            _log.info("  Added projects.archived column")
+    except Exception:
+        pass
+    await conn.execute(text(
+        "INSERT INTO schema_versions (version, applied_at) "
+        "VALUES ('v23_project_archived', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING"
+    ))
+    _log.info("Migration v23_project_archived complete")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown events."""
@@ -1032,6 +1094,10 @@ async def lifespan(app: FastAPI):
         await _migrate_add_dataset_archived(conn)
     async with engine.begin() as conn:
         await _migrate_add_dataset_metadata(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_scitq_task_id(conn)
+    async with engine.begin() as conn:
+        await _migrate_add_project_archived(conn)
     _log.info("PredomicsApp started — data_dir=%s", settings.data_dir)
     yield
 
@@ -1041,6 +1107,9 @@ app = FastAPI(
     description="Web API for gpredomics — sparse interpretable ML model discovery",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
 )
 
 # CORS for Vue.js dev server
@@ -1098,7 +1167,7 @@ if _static_dir.is_dir():
     app.mount("/assets", StaticFiles(directory=_static_dir / "assets"), name="assets")
 
     # Paths that should NOT be handled by the SPA (let FastAPI handle them)
-    _reserved_paths = {"docs", "redoc", "openapi.json", "health", "api"}
+    _reserved_paths = {"health", "api", "ws"}
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):

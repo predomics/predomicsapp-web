@@ -348,6 +348,6 @@ proxy_read_timeout 900s;
 
 FastAPI auto-generates interactive API docs:
 
-- **Swagger UI**: `https://your-domain.com/docs`
-- **ReDoc**: `https://your-domain.com/redoc`
-- **OpenAPI JSON**: `https://your-domain.com/openapi.json`
+- **Swagger UI**: `https://your-domain.com/api/docs`
+- **ReDoc**: `https://your-domain.com/api/redoc`
+- **OpenAPI JSON**: `https://your-domain.com/api/openapi.json`
