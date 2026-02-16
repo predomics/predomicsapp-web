@@ -31,6 +31,11 @@ RUN cd gpredomicspy && maturin build --release --out /build/wheels
 # =============================================================================
 FROM python:3.11-slim AS runtime
 
+LABEL org.opencontainers.image.title="PredomicsApp" \
+      org.opencontainers.image.description="Web application for gpredomics — sparse interpretable ML model discovery" \
+      org.opencontainers.image.source="https://github.com/predomics/predomicsapp-web" \
+      org.opencontainers.image.licenses="GPL-3.0"
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 && \
     rm -rf /var/lib/apt/lists/*

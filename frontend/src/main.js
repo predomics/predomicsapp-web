@@ -3,10 +3,12 @@ import { createPinia } from 'pinia'
 import axios from 'axios'
 import App from './App.vue'
 import router from './router'
+import i18n from './i18n'
 import { useToast } from './composables/useToast'
 
 const app = createApp(App)
 app.use(createPinia())
+app.use(i18n)
 app.use(router)
 
 // Global Axios error interceptor — show toast for server errors

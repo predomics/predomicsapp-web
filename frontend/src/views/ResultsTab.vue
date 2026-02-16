@@ -262,6 +262,43 @@
         <div v-if="contributionData" ref="contributionHeatmapEl" class="plotly-chart plotly-chart-tall"></div>
       </section>
 
+      <!-- SHAP-style Feature Explanations -->
+      <section class="section" v-if="detail.best_individual">
+        <h3>Feature Explanations (SHAP-like)</h3>
+        <p class="info-text">Per-sample feature contribution breakdown: SHAP value = feature value &times; coefficient.</p>
+        <button v-if="!shapData && !shapLoading" class="btn-sm btn-outline" @click="loadShapData">
+          Compute Explanations
+        </button>
+        <div v-if="shapLoading" class="loading">Computing SHAP values...</div>
+        <template v-if="shapData">
+          <div class="shap-tabs">
+            <button :class="{ active: shapView === 'beeswarm' }" @click="shapView = 'beeswarm'">Beeswarm</button>
+            <button :class="{ active: shapView === 'force' }" @click="shapView = 'force'">Force Plot</button>
+            <button :class="{ active: shapView === 'dependence' }" @click="shapView = 'dependence'">Dependence</button>
+          </div>
+          <!-- Beeswarm: strip plot per feature, x=SHAP value, color=feature value -->
+          <div v-if="shapView === 'beeswarm'" ref="beeswarmChartEl" class="plotly-chart plotly-chart-tall"></div>
+          <!-- Force: waterfall for single sample -->
+          <div v-if="shapView === 'force'" class="shap-control-row">
+            <label>Sample:
+              <select v-model="shapSampleIdx" class="shap-select">
+                <option v-for="(s, i) in shapData.sampleNames" :key="i" :value="i">{{ s }}</option>
+              </select>
+            </label>
+            <div ref="forceChartEl" class="plotly-chart"></div>
+          </div>
+          <!-- Dependence: feature value vs SHAP value scatter -->
+          <div v-if="shapView === 'dependence'" class="shap-control-row">
+            <label>Feature:
+              <select v-model="shapFeatureIdx" class="shap-select">
+                <option v-for="(f, i) in shapData.featureImportance" :key="i" :value="f.index">{{ featureLabel(f.name) }}</option>
+              </select>
+            </label>
+            <div ref="dependenceChartEl" class="plotly-chart"></div>
+          </div>
+        </template>
+      </section>
+
       <!-- External validation -->
       <section class="section" v-if="detail.best_individual">
         <h3>External Validation</h3>
@@ -813,6 +850,7 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useProjectStore } from '../stores/project'
 import { useChartTheme } from '../composables/useChartTheme'
+import { useShapValues } from '../composables/useShapValues'
 import axios from 'axios'
 import ValidateModal from '../components/ValidateModal.vue'
 // Lazy-load Plotly for better initial page load
@@ -828,6 +866,7 @@ async function ensurePlotly() {
 const route = useRoute()
 const store = useProjectStore()
 const { themeStore, chartColors, chartLayout, featureLabel: _featureLabel, FUNC_PROPS } = useChartTheme()
+const { computeShapMatrix } = useShapValues()
 
 // ---------------------------------------------------------------------------
 // State
@@ -892,6 +931,15 @@ const waterfallChartEl = ref(null)
 const contributionHeatmapEl = ref(null)
 const contributionData = ref(null)
 const contributionLoading = ref(false)
+// SHAP explanations
+const shapData = ref(null)
+const shapLoading = ref(false)
+const shapView = ref('beeswarm')
+const shapSampleIdx = ref(0)
+const shapFeatureIdx = ref(0)
+const beeswarmChartEl = ref(null)
+const forceChartEl = ref(null)
+const dependenceChartEl = ref(null)
 // Population
 const featureHeatmapEl = ref(null)
 const featurePrevalenceEl = ref(null)
@@ -1653,6 +1701,165 @@ function renderBestModelCharts() {
   renderDirectionChart()
   renderWaterfallChart()
   if (contributionData.value) renderContributionHeatmap()
+  if (shapData.value) renderShapActiveView()
+}
+
+// ---------------------------------------------------------------------------
+// SHAP EXPLANATIONS
+// ---------------------------------------------------------------------------
+
+async function loadShapData() {
+  if (!detail.value?.best_individual) return
+  shapLoading.value = true
+  try {
+    const pid = route.params.id
+    const b = detail.value.best_individual
+    const fNames = Object.entries(b.features).map(([idx]) => featureName(parseInt(idx)))
+    const { data } = await axios.get(`/api/data-explore/${pid}/barcode-data`, {
+      params: { features: fNames.join(','), max_samples: 500 }
+    })
+    const allFeatureNames = detail.value.feature_names || fullResults.value?.feature_names || []
+    shapData.value = computeShapMatrix(data, b, allFeatureNames)
+    shapSampleIdx.value = 0
+    shapFeatureIdx.value = shapData.value.featureImportance[0]?.index || 0
+    await nextTick()
+    renderShapActiveView()
+  } catch (e) {
+    console.error('Failed to load SHAP data:', e)
+  } finally {
+    shapLoading.value = false
+  }
+}
+
+function renderShapActiveView() {
+  if (!shapData.value) return
+  if (shapView.value === 'beeswarm') renderBeeswarmChart()
+  else if (shapView.value === 'force') renderForceChart()
+  else if (shapView.value === 'dependence') renderDependenceChart()
+}
+
+async function renderBeeswarmChart() {
+  await nextTick()
+  if (!beeswarmChartEl.value || !shapData.value) return
+  const c = chartColors()
+  const { shapMatrix, featureNames, featureValues, featureImportance, sampleClasses } = shapData.value
+
+  // Order features by importance (most important at top)
+  const ordered = [...featureImportance].reverse()
+  const traces = []
+
+  for (const { name, index: fi } of ordered) {
+    const shapRow = shapMatrix[fi]
+    const valRow = featureValues[fi]
+    // Add small vertical jitter for visibility
+    const jitter = shapRow.map(() => (Math.random() - 0.5) * 0.3)
+
+    traces.push({
+      type: 'scatter',
+      mode: 'markers',
+      name: featureLabel(name),
+      x: shapRow,
+      y: jitter.map(j => featureImportance.length - 1 - ordered.indexOf(ordered.find(o => o.name === name)) + j),
+      marker: {
+        size: 4,
+        color: valRow,
+        colorscale: 'Viridis',
+        opacity: 0.7,
+        colorbar: traces.length === 0 ? { title: 'Feature value', thickness: 12, len: 0.5 } : undefined,
+      },
+      hovertemplate: `${featureLabel(name)}<br>SHAP: %{x:.4f}<br>Value: %{marker.color:.4f}<extra></extra>`,
+      showlegend: false,
+    })
+  }
+
+  const yLabels = ordered.map(f => featureLabel(f.name))
+  Plotly.newPlot(beeswarmChartEl.value, traces, chartLayout({
+    xaxis: { title: 'SHAP value (impact on prediction)', color: c.text, gridcolor: c.grid, zeroline: true, zerolinecolor: c.grid },
+    yaxis: {
+      tickvals: ordered.map((_, i) => i),
+      ticktext: yLabels,
+      color: c.text,
+      automargin: true,
+    },
+    height: Math.max(300, ordered.length * 30 + 100),
+    margin: { t: 10, b: 50, l: 180, r: 80 },
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderForceChart() {
+  await nextTick()
+  if (!forceChartEl.value || !shapData.value) return
+  const c = chartColors()
+  const { shapMatrix, featureNames, featureImportance, sampleClasses } = shapData.value
+  const si = shapSampleIdx.value
+
+  // Get SHAP values for this sample, sorted by absolute value
+  const contributions = featureImportance.map(f => ({
+    name: f.name,
+    shap: shapMatrix[f.index][si],
+  })).sort((a, b) => Math.abs(b.shap) - Math.abs(a.shap))
+
+  const labels = contributions.map(c => featureLabel(c.name))
+  const values = contributions.map(c => c.shap)
+  const colors = values.map(v => v >= 0 ? '#e53935' : '#1565c0')
+
+  // Waterfall: cumulative from base=0
+  const base = []
+  let cumulative = 0
+  for (const v of values) {
+    base.push(v >= 0 ? cumulative : cumulative + v)
+    cumulative += v
+  }
+
+  Plotly.newPlot(forceChartEl.value, [{
+    type: 'bar',
+    orientation: 'h',
+    x: values.map(Math.abs),
+    y: labels,
+    base: base,
+    marker: { color: colors },
+    hovertemplate: '%{y}<br>SHAP: %{x:.4f}<extra></extra>',
+  }], chartLayout({
+    xaxis: { title: 'Cumulative SHAP value', color: c.text, gridcolor: c.grid },
+    yaxis: { automargin: true, color: c.text, autorange: 'reversed' },
+    height: Math.max(250, contributions.length * 25 + 80),
+    margin: { t: 10, b: 50, l: 180, r: 20 },
+    annotations: [{
+      x: cumulative, y: -0.5,
+      text: `Score: ${cumulative.toFixed(4)}`,
+      showarrow: false, font: { color: c.text, size: 11 },
+      yref: 'paper', yanchor: 'top',
+    }],
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderDependenceChart() {
+  await nextTick()
+  if (!dependenceChartEl.value || !shapData.value) return
+  const c = chartColors()
+  const { shapMatrix, featureNames, featureValues, sampleClasses } = shapData.value
+  const fi = shapFeatureIdx.value
+  if (fi >= featureNames.length) return
+
+  const xVals = featureValues[fi]
+  const yVals = shapMatrix[fi]
+  const classLabels = sampleClasses.map(cl => cl === 0 ? 'Class 0' : 'Class 1')
+  const classColors = sampleClasses.map(cl => cl === 0 ? '#1565c0' : '#e53935')
+
+  Plotly.newPlot(dependenceChartEl.value, [{
+    type: 'scatter',
+    mode: 'markers',
+    x: xVals,
+    y: yVals,
+    marker: { size: 6, color: classColors, opacity: 0.7 },
+    text: classLabels,
+    hovertemplate: 'Value: %{x:.4f}<br>SHAP: %{y:.4f}<br>%{text}<extra></extra>',
+  }], chartLayout({
+    xaxis: { title: featureLabel(featureNames[fi]), color: c.text, gridcolor: c.grid },
+    yaxis: { title: 'SHAP value', color: c.text, gridcolor: c.grid },
+    height: 350,
+    margin: { t: 10, b: 50, l: 60, r: 20 },
+  }), { responsive: true, displayModeBar: false })
 }
 
 // ---------------------------------------------------------------------------
@@ -2919,6 +3126,7 @@ async function loadJobResults() {
       juryData.value = raw.jury || null
       importanceData.value = raw.importance || null
       contributionData.value = null
+      shapData.value = null
       // Reset filters for new job
       selectedLanguages.value = []
       selectedDataTypes.value = []
@@ -3016,6 +3224,11 @@ function debouncedCopresenceRender() {
     if (subTab.value === 'copresence') renderCoPresenceCharts()
   }, 300)
 }
+// Re-render SHAP charts when view or selection changes
+watch(shapView, async () => { await nextTick(); renderShapActiveView() })
+watch(shapSampleIdx, async () => { await nextTick(); if (shapView.value === 'force') renderForceChart() })
+watch(shapFeatureIdx, async () => { await nextTick(); if (shapView.value === 'dependence') renderDependenceChart() })
+
 watch(copresenceFBM, debouncedCopresenceRender)
 watch(copresenceMinPrev, debouncedCopresenceRender)
 watch(copresenceAlpha, debouncedCopresenceRender)
@@ -3899,6 +4112,52 @@ onMounted(loadJobList)
   background: var(--bg-card); border: 1px solid var(--border-color);
   border-radius: 6px; padding: 0.75rem; margin-top: 0.5rem;
   font-size: 0.75rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+}
+
+/* SHAP explanations */
+.shap-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0.75rem 0;
+}
+.shap-tabs button {
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.shap-tabs button.active {
+  background: var(--accent);
+  color: var(--accent-text, #fff);
+  border-color: var(--accent);
+}
+.shap-tabs button:hover:not(.active) {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+.shap-control-row {
+  margin-top: 0.5rem;
+}
+.shap-control-row label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+}
+.shap-select {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-body);
+  font-size: 0.82rem;
+  max-width: 300px;
 }
 
 @media (max-width: 900px) {
