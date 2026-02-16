@@ -3,12 +3,12 @@
     <header class="project-header">
       <h2>{{ project.name }}</h2>
       <div class="project-meta">
-        {{ project.datasets?.length || 0 }} datasets &middot;
-        {{ project.jobs?.length || 0 }} jobs
+        {{ project.datasets?.length || 0 }} {{ $t('projectDashboard.datasets') }} &middot;
+        {{ project.jobs?.length || 0 }} {{ $t('projectDashboard.jobs') }}
       </div>
-      <button class="share-btn" @click="showShare = true">Share</button>
-      <button class="share-btn" @click="showPublicShare = true">Public Link</button>
-      <button class="share-btn" @click="showComments = !showComments">Notes</button>
+      <button class="share-btn" @click="showShare = true">{{ $t('projectDashboard.share') }}</button>
+      <button class="share-btn" @click="showPublicShare = true">{{ $t('projectDashboard.publicLink') }}</button>
+      <button class="share-btn" @click="showComments = !showComments">{{ $t('projectDashboard.notes') }}</button>
     </header>
 
     <ShareModal
@@ -30,9 +30,9 @@
     />
 
     <nav class="tab-nav">
-      <router-link :to="`/project/${projectId}/data`" class="tab" active-class="active">Data</router-link>
-      <router-link :to="`/project/${projectId}/parameters`" class="tab" active-class="active">Parameters &amp; Run</router-link>
-      <router-link :to="`/project/${projectId}/results`" class="tab" active-class="active">Results</router-link>
+      <router-link :to="`/project/${projectId}/data`" class="tab" active-class="active">{{ $t('projectDashboard.dataTab') }}</router-link>
+      <router-link :to="`/project/${projectId}/parameters`" class="tab" active-class="active">{{ $t('projectDashboard.parametersTab') }}</router-link>
+      <router-link :to="`/project/${projectId}/results`" class="tab" active-class="active">{{ $t('projectDashboard.resultsTab') }}</router-link>
     </nav>
 
     <div class="dashboard-body">
@@ -47,10 +47,10 @@
             :size="28"
             :stroke-width="3"
           />
-          <span>Console</span>
+          <span>{{ $t('projectDashboard.console') }}</span>
           <span class="status-badge-mini" :class="miniStatus">{{ miniStatus }}</span>
           <template v-if="jobProgress.status === 'running' && jobProgress.generation > 0">
-            <span class="mini-gen">Gen {{ jobProgress.generation }}<template v-if="jobProgress.maxGen"> / {{ jobProgress.maxGen }}</template></span>
+            <span class="mini-gen">{{ $t('projectDashboard.gen') }} {{ jobProgress.generation }}<template v-if="jobProgress.maxGen"> / {{ jobProgress.maxGen }}</template></span>
             <span class="mini-eta" v-if="jobProgress.eta">{{ jobProgress.eta }}</span>
           </template>
           <span class="expand-icon">&#9650;</span>
@@ -67,7 +67,7 @@
       </div>
     </div>
   </div>
-  <div v-else class="loading">Loading project...</div>
+  <div v-else class="loading">{{ $t('projectDashboard.loadingProject') }}</div>
 </template>
 
 <script setup>
@@ -82,10 +82,12 @@ import CommentsSidebar from '../components/CommentsSidebar.vue'
 import PublicShareModal from '../components/PublicShareModal.vue'
 import { requestPermission, notifyJobCompleted, notifyJobFailed } from '../utils/notify'
 import { useToast } from '../composables/useToast'
+import { useI18n } from 'vue-i18n'
 
 const route = useRoute()
 const store = useProjectStore()
 const { addToast } = useToast()
+const { t } = useI18n()
 const showShare = ref(false)
 const showPublicShare = ref(false)
 const showComments = ref(false)
@@ -111,21 +113,21 @@ async function onJobCompleted(jobId) {
     const { data } = await axios.get(`/api/analysis/${projectId.value}/jobs/${jobId}`)
     const aucStr = data.best_auc != null ? ` — AUC ${Number(data.best_auc).toFixed(4)}` : ''
     const kStr = data.best_k != null ? ` (k=${data.best_k})` : ''
-    addToast(`Job completed${aucStr}${kStr}`, 'success', 8000)
+    addToast(`${t('projectDashboard.jobCompleted')}${aucStr}${kStr}`, 'success', 8000)
     notifyJobCompleted(project.value?.name || 'Project', {
       auc: data.best_auc,
       k: data.best_k,
       jobId,
     })
   } catch {
-    addToast('Job completed', 'success', 6000)
+    addToast(t('projectDashboard.jobCompleted'), 'success', 6000)
     notifyJobCompleted(project.value?.name || 'Project', { jobId })
   }
 }
 
 function onJobFailed(jobId) {
   loadProject()
-  addToast('Job failed — check console for details', 'error', 8000)
+  addToast(t('projectDashboard.jobFailed'), 'error', 8000)
   notifyJobFailed(project.value?.name || 'Project', { jobId })
 }
 

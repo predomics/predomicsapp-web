@@ -4,19 +4,19 @@
     <div class="summary-bar" v-if="summary">
       <div class="stat-card">
         <div class="stat-value">{{ summary.n_features }}</div>
-        <div class="stat-label">Features</div>
+        <div class="stat-label">{{ $t('data.features') }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-value">{{ summary.n_samples }}</div>
-        <div class="stat-label">Samples</div>
+        <div class="stat-label">{{ $t('data.samples') }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-value">{{ summary.n_classes }}</div>
-        <div class="stat-label">Classes</div>
+        <div class="stat-label">{{ $t('data.classes') }}</div>
       </div>
       <div class="stat-card" v-if="featureStats">
         <div class="stat-value accent">{{ featureStats.selected_count }}</div>
-        <div class="stat-label">Selected</div>
+        <div class="stat-label">{{ $t('data.selected') }}</div>
       </div>
     </div>
 
@@ -26,7 +26,7 @@
       <aside class="left-panel">
         <!-- Dataset slots (2x2) -->
         <section class="section">
-          <div class="section-title">Datasets</div>
+          <div class="section-title">{{ $t('data.datasets') }}</div>
           <div class="ds-grid">
             <div v-for="slot in dsSlots" :key="slot.role" class="ds-slot" :class="{ ok: slot.ds, missing: !slot.ds && slot.required, optional: !slot.required && !slot.ds }">
               <span class="ds-role">{{ slot.label }}</span>
@@ -35,10 +35,10 @@
               </span>
               <template v-else>
                 <select v-if="libraryDatasets.length > 0" class="ds-picker" @change="e => pickFromLibrary(e, slot.role)">
-                  <option value="">Pick from library...</option>
+                  <option value="">{{ $t('data.pickFromLibrary') }}</option>
                   <option v-for="d in libraryDatasets" :key="d.id" :value="d.id">{{ d.name }}</option>
                 </select>
-                <label :class="['ds-upload', { 'ds-optional': !slot.required }]">Upload<input type="file" accept=".tsv,.csv,.txt" @change="e => uploadFile(e, slot.role)" /></label>
+                <label :class="['ds-upload', { 'ds-optional': !slot.required }]">{{ $t('data.upload') }}<input type="file" accept=".tsv,.csv,.txt" @change="e => uploadFile(e, slot.role)" /></label>
               </template>
             </div>
           </div>
@@ -46,22 +46,22 @@
 
         <!-- Data options -->
         <section class="section">
-          <div class="section-title">Data Options</div>
+          <div class="section-title">{{ $t('data.dataOptions') }}</div>
           <label class="inline-check">
             <input type="checkbox" v-model="cfg.data.features_in_rows" />
-            Features in rows
+            {{ $t('data.featuresInRows') }}
           </label>
           <label class="inline-check">
             <input type="checkbox" v-model="cfg.data.inverse_classes" />
-            Inverse classes
+            {{ $t('data.inverseClasses') }}
           </label>
           <div class="form-row">
-            <label>Holdout ratio
+            <label>{{ $t('data.holdoutRatio') }}
               <input type="number" v-model.number="cfg.data.holdout_ratio" min="0" max="1" step="0.05" />
             </label>
           </div>
           <div class="form-col" v-if="summary && summary.class_labels">
-            <label>Class labels
+            <label>{{ $t('data.classLabels') }}
               <div class="class-labels-row">
                 <span v-for="(cls, i) in summary.class_labels" :key="i" class="class-label-chip">
                   <input
@@ -79,23 +79,23 @@
 
         <!-- Feature filtering -->
         <section class="section">
-          <div class="section-title">Feature Filtering</div>
+          <div class="section-title">{{ $t('data.featureFiltering') }}</div>
           <div class="form-col">
-            <label>Selection method
+            <label>{{ $t('data.selectionMethod') }}
               <select v-model="cfg.data.feature_selection_method" @change="debouncedRefresh">
-                <option value="wilcoxon">Wilcoxon</option>
-                <option value="studentt">t-test</option>
-                <option value="bayesian_fisher">Bayesian Fisher</option>
-                <option value="none">None</option>
+                <option value="wilcoxon">{{ $t('data.wilcoxon') }}</option>
+                <option value="studentt">{{ $t('data.tTest') }}</option>
+                <option value="bayesian_fisher">{{ $t('data.bayesianFisher') }}</option>
+                <option value="none">{{ $t('data.none') }}</option>
               </select>
             </label>
-            <label>Min prevalence %
+            <label>{{ $t('data.minPrevalence') }}
               <input type="number" v-model.number="cfg.data.feature_minimal_prevalence_pct" min="0" max="100" @change="debouncedRefresh" />
             </label>
-            <label>Max adj. p-value
+            <label>{{ $t('data.maxPValue') }}
               <input type="number" v-model.number="cfg.data.feature_maximal_adj_pvalue" min="0" max="1" step="0.01" @change="debouncedRefresh" />
             </label>
-            <label>Min feature value
+            <label>{{ $t('data.minFeatureValue') }}
               <input type="number" v-model.number="cfg.data.feature_minimal_feature_value" min="0" step="0.0001" @change="debouncedRefresh" />
             </label>
           </div>
@@ -104,16 +104,16 @@
         <!-- Feature table -->
         <section class="section" v-if="featureStats && featureStats.features.length > 0">
           <div class="section-title">
-            Features
+            {{ $t('data.features') }}
             <span class="badge">{{ featureStats.selected_count }}/{{ featureStats.n_features }}</span>
           </div>
           <div class="feature-table-scroll">
             <table class="feature-table">
               <thead>
                 <tr>
-                  <th class="sortable" @click="sortBy('name')">Name {{ sortIcon('name') }}</th>
-                  <th class="sortable" @click="sortBy('significance')">Signif. {{ sortIcon('significance') }}</th>
-                  <th class="sortable" @click="sortBy('prevalence')">Prev % {{ sortIcon('prevalence') }}</th>
+                  <th class="sortable" @click="sortBy('name')">{{ $t('data.name') }} {{ sortIcon('name') }}</th>
+                  <th class="sortable" @click="sortBy('significance')">{{ $t('data.significance') }} {{ sortIcon('significance') }}</th>
+                  <th class="sortable" @click="sortBy('prevalence')">{{ $t('data.prevalenceShort') }} {{ sortIcon('prevalence') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -145,15 +145,15 @@
       <main class="right-panel">
         <div class="viz-header">
           <nav class="viz-tabs">
-            <button :class="{ active: vizTab === 'prevalence' }" @click="vizTab = 'prevalence'">Prevalence</button>
-            <button :class="{ active: vizTab === 'abundance' }" @click="vizTab = 'abundance'">Abundance</button>
-            <button :class="{ active: vizTab === 'barcode' }" @click="vizTab = 'barcode'">Barcode</button>
-            <button :class="{ active: vizTab === 'volcano' }" @click="vizTab = 'volcano'">Volcano</button>
+            <button :class="{ active: vizTab === 'prevalence' }" @click="vizTab = 'prevalence'">{{ $t('data.prevalence') }}</button>
+            <button :class="{ active: vizTab === 'abundance' }" @click="vizTab = 'abundance'">{{ $t('data.abundance') }}</button>
+            <button :class="{ active: vizTab === 'barcode' }" @click="vizTab = 'barcode'">{{ $t('data.barcode') }}</button>
+            <button :class="{ active: vizTab === 'volcano' }" @click="vizTab = 'volcano'">{{ $t('data.volcano') }}</button>
           </nav>
           <label class="topn-control" v-if="featureStats">
-            Top
+            {{ $t('data.top') }}
             <input type="number" v-model.number="topN" :min="1" :max="maxTopN" step="1" class="topn-input" />
-            / {{ featureStats.selected_count }} features
+            / {{ featureStats.selected_count }} {{ $t('data.features') }}
           </label>
         </div>
 
@@ -183,7 +183,7 @@
       </main>
     </div>
 
-    <div v-if="loading" class="loading">Loading data...</div>
+    <div v-if="loading" class="loading">{{ $t('data.loadingData') }}</div>
   </div>
 </template>
 
@@ -197,6 +197,7 @@ import { useThemeStore } from '../stores/theme'
 import { useChartTheme } from '../composables/useChartTheme'
 import axios from 'axios'
 import Plotly from 'plotly.js-dist-min'
+import { useI18n } from 'vue-i18n'
 
 const route = useRoute()
 const store = useProjectStore()
@@ -205,6 +206,7 @@ const configStore = useConfigStore()
 const themeStore = useThemeStore()
 const { chartColors, chartLayout, featureLabel: _featureLabel } = useChartTheme()
 const cfg = configStore.form
+const { t } = useI18n()
 
 // State
 const loading = ref(false)
