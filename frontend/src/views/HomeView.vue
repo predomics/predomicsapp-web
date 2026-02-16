@@ -23,12 +23,22 @@
     <section id="workflow" class="section workflow reveal">
       <h2 class="section-title">{{ $t('home.howItWorks') }}</h2>
       <p class="section-subtitle">{{ $t('home.howItWorksDesc') }}</p>
-      <div class="pipeline">
-        <div class="pipe-step" v-for="(step, i) in pipelineSteps" :key="i">
-          <div class="pipe-num">{{ i + 1 }}</div>
-          <div class="pipe-label">{{ step.label }}</div>
-          <div class="pipe-desc">{{ step.desc }}</div>
-        </div>
+      <div class="workflow-track">
+        <template v-for="(step, i) in workflowSteps" :key="i">
+          <div class="wf-step" :style="{ '--delay': (i * 0.2 + 0.2) + 's' }">
+            <div class="wf-icon-ring">
+              <span class="wf-icon">{{ step.icon }}</span>
+              <span class="wf-badge">{{ i + 1 }}</span>
+            </div>
+            <h3 class="wf-label">{{ step.label }}</h3>
+            <p class="wf-desc">{{ step.desc }}</p>
+          </div>
+          <div v-if="i < workflowSteps.length - 1" class="wf-connector" :style="{ '--delay': (i * 0.2 + 0.35) + 's' }">
+            <div class="wf-line"></div>
+            <div class="wf-dot"></div>
+            <div class="wf-dot wf-dot-2"></div>
+          </div>
+        </template>
       </div>
     </section>
 
@@ -181,12 +191,11 @@ function scrollTo(id) {
 }
 
 // ── Data ──
-const pipelineSteps = computed(() => [
-  { label: t('home.steps.dataInput'), desc: t('home.steps.dataInputDesc') },
-  { label: t('home.steps.featureSelection'), desc: t('home.steps.featureSelectionDesc') },
-  { label: t('home.steps.evolutionarySearch'), desc: t('home.steps.evolutionarySearchDesc') },
-  { label: t('home.steps.modelEvaluation'), desc: t('home.steps.modelEvaluationDesc') },
-  { label: t('home.steps.juryVoting'), desc: t('home.steps.juryVotingDesc') },
+const workflowSteps = computed(() => [
+  { icon: '\u21EA', label: t('home.workflow.upload'), desc: t('home.workflow.uploadDesc') },
+  { icon: '\u2699', label: t('home.workflow.configure'), desc: t('home.workflow.configureDesc') },
+  { icon: '\u26A1', label: t('home.workflow.analyze'), desc: t('home.workflow.analyzeDesc') },
+  { icon: '\u2316', label: t('home.workflow.explore'), desc: t('home.workflow.exploreDesc') },
 ])
 
 const featureCards = computed(() => [
@@ -459,7 +468,7 @@ onMounted(async () => {
 }
 
 /* ================================================================
-   PIPELINE
+   ANIMATED WORKFLOW
    ================================================================ */
 .workflow {
   background: var(--bg-card);
@@ -469,63 +478,166 @@ onMounted(async () => {
   padding: 4rem 1.5rem;
 }
 
-.pipeline {
-  display: flex;
-  justify-content: center;
-  gap: 0;
-  flex-wrap: wrap;
-  max-width: 1000px;
-  margin: 0 auto;
-  counter-reset: step;
+/* Steps animate individually, so override section-level reveal */
+.workflow.reveal {
+  opacity: 1;
+  transform: none;
+  transition: none;
 }
 
-.pipe-step {
+.workflow .section-title,
+.workflow .section-subtitle {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.workflow.visible .section-title { opacity: 1; transform: translateY(0); }
+.workflow.visible .section-subtitle { opacity: 1; transform: translateY(0); transition-delay: 0.1s; }
+
+.workflow-track {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+/* ── Step card ── */
+.wf-step {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 1.25rem 1.5rem;
-  position: relative;
+  text-align: center;
+  padding: 1.25rem 0.75rem;
   flex: 1;
-  min-width: 140px;
+  min-width: 0;
+  opacity: 0;
+  transform: translateY(24px);
+  cursor: default;
+}
+.workflow.visible .wf-step {
+  animation: wfStepReveal 0.6s ease forwards;
+  animation-delay: var(--delay, 0s);
 }
 
-/* Connecting line between steps */
-.pipe-step:not(:last-child)::after {
-  content: '';
+.wf-icon-ring {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(79, 195, 247, 0.12), rgba(79, 195, 247, 0.03));
+  border: 2px solid rgba(79, 195, 247, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: all 0.35s ease;
+}
+.wf-step:hover .wf-icon-ring {
+  border-color: var(--brand);
+  background: linear-gradient(135deg, rgba(79, 195, 247, 0.22), rgba(79, 195, 247, 0.08));
+  box-shadow: 0 0 24px rgba(79, 195, 247, 0.25), 0 0 48px rgba(79, 195, 247, 0.08);
+  transform: scale(1.1);
+}
+
+.wf-icon {
+  font-size: 1.7rem;
+  line-height: 1;
+}
+
+.wf-badge {
   position: absolute;
-  right: -2px;
-  top: 2.2rem;
-  width: 24px;
-  height: 2px;
-  background: linear-gradient(90deg, var(--brand), var(--border));
-  z-index: 1;
-}
-
-.pipe-num {
-  width: 28px;
-  height: 28px;
+  top: -3px;
+  right: -3px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: var(--brand);
   color: #fff;
-  font-size: 0.75rem;
+  font-size: 0.68rem;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 0.5rem;
-  box-shadow: 0 2px 8px rgba(79, 195, 247, 0.3);
+  box-shadow: 0 2px 8px rgba(79, 195, 247, 0.4);
 }
 
-.pipe-label {
-  font-size: 0.85rem;
+.wf-label {
+  font-size: 0.9rem;
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 0.15rem;
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
 }
 
-.pipe-desc {
-  font-size: 0.75rem;
+.wf-desc {
+  font-size: 0.78rem;
   color: var(--text-muted);
+  line-height: 1.5;
+  max-width: 170px;
+  margin: 0 auto;
+}
+
+/* ── Connector with flowing dots ── */
+.wf-connector {
+  display: flex;
+  align-items: center;
+  width: 48px;
+  flex-shrink: 0;
+  padding-top: 2.1rem;
+  position: relative;
+  opacity: 0;
+  transform: translateY(24px);
+}
+.workflow.visible .wf-connector {
+  animation: wfStepReveal 0.5s ease forwards;
+  animation-delay: var(--delay, 0s);
+}
+
+.wf-line {
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(79, 195, 247, 0.5), rgba(79, 195, 247, 0.2));
+  border-radius: 1px;
+}
+.wf-line::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  top: calc(2.1rem - 3px);
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid rgba(79, 195, 247, 0.45);
+}
+
+.wf-dot {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--brand);
+  box-shadow: 0 0 6px rgba(79, 195, 247, 0.7);
+  top: calc(2.1rem - 1.5px);
+}
+.workflow.visible .wf-dot {
+  animation: wfFlowDot 2.2s ease-in-out infinite;
+}
+.workflow.visible .wf-dot-2 {
+  animation: wfFlowDot 2.2s ease-in-out 1.1s infinite;
+}
+
+/* ── Keyframes ── */
+@keyframes wfFlowDot {
+  0%   { left: -5px; opacity: 0; }
+  12%  { opacity: 1; }
+  88%  { opacity: 1; }
+  100% { left: calc(48px - 5px); opacity: 0; }
+}
+
+@keyframes wfStepReveal {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* ================================================================
@@ -896,9 +1008,27 @@ onMounted(async () => {
   .hero-subtitle { font-size: 1.05rem; }
   .hero-actions { flex-direction: column; align-items: center; gap: 0.75rem; }
 
-  .pipeline { flex-direction: column; align-items: center; gap: 0.5rem; }
-  .pipe-step:not(:last-child)::after { display: none; }
-  .pipe-step { min-width: auto; padding: 0.75rem 1rem; }
+  .workflow-track { flex-direction: column; align-items: center; gap: 0.5rem; }
+  .wf-connector {
+    width: 2px;
+    height: 36px;
+    padding-top: 0;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .wf-line { width: 2px; height: 100%; background: linear-gradient(180deg, rgba(79, 195, 247, 0.5), rgba(79, 195, 247, 0.2)); }
+  .wf-line::after {
+    right: auto;
+    top: auto;
+    bottom: -6px;
+    left: calc(50% - 4px);
+    border-top: 6px solid rgba(79, 195, 247, 0.45);
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: none;
+  }
+  .wf-dot, .wf-dot-2 { display: none; }
+  .wf-desc { max-width: 240px; }
 
   .section { padding: 3rem 1rem; }
   .section-title { font-size: 1.4rem; }

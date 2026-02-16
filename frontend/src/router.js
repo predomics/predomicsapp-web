@@ -25,6 +25,12 @@ const routes = [
     component: () => import('./views/HomeView.vue'),
   },
   {
+    path: '/credits',
+    name: 'Credits',
+    component: () => import('./views/CreditsView.vue'),
+    meta: { guest: true, public: true },
+  },
+  {
     path: '/dashboard',
     name: 'Dashboard',
     component: () => import('./views/DashboardView.vue'),
