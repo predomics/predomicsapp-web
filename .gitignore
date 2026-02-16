@@ -35,3 +35,16 @@ backend/data/
 # Environment
 .env
 .env.local
+
+# Test / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Backups & SSL (runtime)
+backups/
+certbot/
+
+# Misc artifacts
+.project_planning.md
+/package-lock.json
