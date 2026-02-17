@@ -345,7 +345,22 @@
     "ecoFeaturesFiltered": "Variables retenues",
     "ecoModulesTitle": "Modules (Louvain)",
     "ecoTaxonomyLegend": "Légende taxonomique",
-    "ecoOrganic": "Organique"
+    "ecoOrganic": "Organique",
+    "stability": "Stabilité",
+    "stabilityDesc": "Analyse de stabilité de la population de modèles — mesure la cohérence de la sélection des variables à chaque niveau de parcimonie.",
+    "stabLoading": "Calcul des indices de stabilité...",
+    "stabIndices": "Indices de stabilité",
+    "stabFeatureHeatmap": "Variables × Parcimonie",
+    "stabDendrogram": "Clustering de modèles",
+    "stabIndicesTitle": "Stabilité vs Parcimonie",
+    "stabFeatureHeatmapTitle": "Prévalence des variables par niveau de parcimonie",
+    "stabDendrogramTitle": "Matrice de distance des modèles (Tanimoto)",
+    "stabSparsity": "Parcimonie (k)",
+    "stabStabilityIndex": "Indice de stabilité",
+    "stabModels": "modèles",
+    "stabClusters": "Clusters",
+    "stabCluster": "Cluster",
+    "stabPeakStability": "Pic de stabilité"
   },
   "meta": {
     "title": "Méta-Analyse Multi-Cohortes",

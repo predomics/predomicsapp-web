@@ -345,7 +345,22 @@
     "ecoFeaturesFiltered": "Features kept",
     "ecoModulesTitle": "Modules (Louvain)",
     "ecoTaxonomyLegend": "Taxonomy Legend",
-    "ecoOrganic": "Organic"
+    "ecoOrganic": "Organic",
+    "stability": "Stability",
+    "stabilityDesc": "Stability analysis of the model population — measures how consistently the same features are selected across models at each sparsity level.",
+    "stabLoading": "Computing stability indices...",
+    "stabIndices": "Stability Indices",
+    "stabFeatureHeatmap": "Feature × Sparsity",
+    "stabDendrogram": "Model Clustering",
+    "stabIndicesTitle": "Stability vs Sparsity",
+    "stabFeatureHeatmapTitle": "Feature Prevalence by Sparsity Level",
+    "stabDendrogramTitle": "Model Distance Matrix (Tanimoto)",
+    "stabSparsity": "Sparsity (k)",
+    "stabStabilityIndex": "Stability Index",
+    "stabModels": "models",
+    "stabClusters": "Clusters",
+    "stabCluster": "Cluster",
+    "stabPeakStability": "Peak stability"
   },
   "meta": {
     "title": "Multi-Cohort Meta-Analysis",

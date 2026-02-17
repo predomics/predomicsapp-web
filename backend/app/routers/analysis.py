@@ -788,6 +788,33 @@ async def get_job_results_raw(
     return results
 
 
+@router.get("/{project_id}/jobs/{job_id}/stability")
+async def get_stability_analysis(
+    project_id: str,
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compute model stability analysis for a job's FBM population.
+
+    Returns stability indices (Kuncheva, Tanimoto, CW_rel) per sparsity level,
+    hierarchical clustering dendrogram, and feature × sparsity heatmap.
+    """
+    from ..services import stability
+
+    await _verify_job_access(project_id, job_id, user, db)
+    results = storage.get_job_result(project_id, job_id)
+    if not results:
+        raise HTTPException(status_code=404, detail="Results not found")
+
+    population = results.get("population", [])
+    feature_names = results.get("feature_names", [])
+    if not population:
+        raise HTTPException(status_code=400, detail="No population data in results")
+
+    return stability.compute_stability_analysis(population, feature_names)
+
+
 @router.post("/{project_id}/jobs/{job_id}/validate")
 async def validate_on_new_data(
     project_id: str,

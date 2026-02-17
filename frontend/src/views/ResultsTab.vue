@@ -137,6 +137,7 @@
       <button :class="{ active: subTab === 'comparative' }" @click="subTab = 'comparative'">{{ $t('results.comparative') }}</button>
       <button v-if="population.length > 1" :class="{ active: subTab === 'copresence' }" @click="subTab = 'copresence'">{{ $t('results.copresence') }}</button>
       <button :class="{ active: subTab === 'ecosystem' }" @click="subTab = 'ecosystem'">{{ $t('results.ecosystem') }}</button>
+      <button v-if="population.length > 1" :class="{ active: subTab === 'stability' }" @click="subTab = 'stability'">{{ $t('results.stability') }}</button>
       <div class="export-dropdown-wrap" v-if="detail">
         <button class="btn-sm btn-export" @click="exportMenuOpen = !exportMenuOpen">
           &#8615; {{ $t('results.export') }}
@@ -886,6 +887,18 @@
       />
     </div>
 
+    <!-- ============================================================ -->
+    <!-- STABILITY SUB-TAB                                            -->
+    <!-- ============================================================ -->
+    <div v-if="detail && subTab === 'stability'" class="sub-content">
+      <StabilityTab
+        :projectId="route.params.id"
+        :jobId="selectedJobId || ''"
+        :population="population"
+        :active="subTab === 'stability'"
+      />
+    </div>
+
     <!-- Empty states -->
     <div v-if="!detail && jobs.length === 0" class="empty">
       {{ $t('results.noJobsYet') }}
@@ -908,6 +921,7 @@ import ValidateModal from '../components/ValidateModal.vue'
 import { useI18n } from 'vue-i18n'
 import SvgIcon from '../components/SvgIcon.vue'
 import EcosystemTab from '../components/results/EcosystemTab.vue'
+import StabilityTab from '../components/results/StabilityTab.vue'
 // Lazy-load Plotly for better initial page load
 let Plotly = null
 async function ensurePlotly() {

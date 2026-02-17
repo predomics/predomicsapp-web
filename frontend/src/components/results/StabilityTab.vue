@@ -1,0 +1,464 @@
+<template>
+  <div class="stability-tab">
+    <!-- Header -->
+    <p class="stab-desc">{{ $t('results.stabilityDesc') }}</p>
+
+    <!-- Loading -->
+    <div v-if="loading" class="loading">{{ $t('results.stabLoading') }}</div>
+
+    <!-- Error -->
+    <div v-if="error" class="error-text">{{ error }}</div>
+
+    <!-- View selector -->
+    <div v-if="stabData && !loading" class="stab-view-selector">
+      <button :class="{ active: view === 'indices' }" @click="view = 'indices'">{{ $t('results.stabIndices') }}</button>
+      <button :class="{ active: view === 'heatmap' }" @click="view = 'heatmap'">{{ $t('results.stabFeatureHeatmap') }}</button>
+      <button :class="{ active: view === 'dendrogram' }" @click="view = 'dendrogram'">{{ $t('results.stabDendrogram') }}</button>
+    </div>
+
+    <!-- 1. Stability Indices vs Sparsity -->
+    <div v-show="!loading && !error && stabData && view === 'indices'" class="stab-chart-wrap">
+      <div ref="indicesChartEl" class="stab-chart"></div>
+    </div>
+
+    <!-- 2. Feature × Sparsity Heatmap -->
+    <div v-show="!loading && !error && stabData && view === 'heatmap'" class="stab-chart-wrap">
+      <div ref="heatmapChartEl" class="stab-chart stab-chart-tall"></div>
+    </div>
+
+    <!-- 3. Model Distance / Dendrogram -->
+    <div v-show="!loading && !error && stabData && view === 'dendrogram'" class="stab-chart-wrap">
+      <div ref="dendroChartEl" class="stab-chart stab-chart-tall"></div>
+      <!-- Cluster summary -->
+      <div v-if="stabData && stabData.dendrogram" class="stab-clusters">
+        <h4>{{ $t('results.stabClusters') }} ({{ stabData.dendrogram.n_clusters }})</h4>
+        <div v-for="(count, idx) in clusterCounts" :key="idx" class="stab-cluster-item">
+          <span class="stab-cluster-dot" :style="{ backgroundColor: clusterColor(idx) }"></span>
+          {{ $t('results.stabCluster') }} {{ idx + 1 }}: <strong>{{ count }}</strong> {{ $t('results.stabModels') }}
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats bar -->
+    <div v-if="stabData && !loading" class="stab-stats-bar">
+      <span><strong>{{ stabData.stats.n_models }}</strong> {{ $t('results.stabModels') }}</span>
+      <span>k: <strong>{{ stabData.stats.k_min }}–{{ stabData.stats.k_max }}</strong></span>
+      <span>{{ $t('results.stabPeakStability') }}: <strong>k={{ stabData.stats.peak_stability_k }}</strong></span>
+      <span v-if="stabData.dendrogram"><strong>{{ stabData.dendrogram.n_clusters }}</strong> {{ $t('results.stabClusters') }}</span>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { useChartTheme } from '../../composables/useChartTheme'
+import { useI18n } from 'vue-i18n'
+import axios from 'axios'
+
+let Plotly = null
+async function ensurePlotly() {
+  if (!Plotly) {
+    const mod = await import('plotly.js-dist-min')
+    Plotly = mod.default
+  }
+  return Plotly
+}
+
+const CLUSTER_COLORS = [
+  '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+  '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+  '#aec7e8', '#ffbb78',
+]
+
+const props = defineProps({
+  projectId: { type: String, required: true },
+  jobId: { type: String, default: '' },
+  population: { type: Array, default: () => [] },
+  active: { type: Boolean, default: false },
+})
+
+const { chartColors, chartLayout } = useChartTheme()
+const { t } = useI18n()
+
+// State
+const loading = ref(false)
+const error = ref(null)
+const stabData = ref(null)
+const view = ref('indices')
+
+// Chart refs
+const indicesChartEl = ref(null)
+const heatmapChartEl = ref(null)
+const dendroChartEl = ref(null)
+
+// Computed
+const clusterCounts = computed(() => {
+  if (!stabData.value?.dendrogram?.clusters) return []
+  const clusters = stabData.value.dendrogram.clusters
+  const counts = {}
+  for (const c of clusters) {
+    counts[c] = (counts[c] || 0) + 1
+  }
+  const sorted = Object.keys(counts).sort((a, b) => +a - +b)
+  return sorted.map(k => counts[k])
+})
+
+function clusterColor(idx) {
+  return CLUSTER_COLORS[idx % CLUSTER_COLORS.length]
+}
+
+// ----------- Fetch -----------
+
+async function fetchStability() {
+  if (!props.jobId) return
+  loading.value = true
+  error.value = null
+
+  try {
+    const { data } = await axios.get(
+      `/api/analysis/${props.projectId}/jobs/${props.jobId}/stability`
+    )
+    stabData.value = data
+    await nextTick()
+    renderActiveView()
+  } catch (err) {
+    console.error('Stability error:', err)
+    error.value = err.response?.data?.detail || err.message
+  } finally {
+    loading.value = false
+  }
+}
+
+// ----------- Rendering -----------
+
+async function renderActiveView() {
+  if (!stabData.value) return
+  if (view.value === 'indices') await renderIndicesChart()
+  else if (view.value === 'heatmap') await renderHeatmap()
+  else if (view.value === 'dendrogram') await renderDendrogram()
+}
+
+async function renderIndicesChart() {
+  if (!stabData.value?.stability_by_k?.length || !indicesChartEl.value) return
+  await ensurePlotly()
+  const c = chartColors()
+
+  const byK = stabData.value.stability_by_k
+  const xVals = byK.map(d => d.k)
+
+  // Stability index traces (left y-axis)
+  const tanimotoTrace = {
+    x: xVals,
+    y: byK.map(d => d.tanimoto),
+    name: 'Tanimoto',
+    type: 'scatter',
+    mode: 'lines+markers',
+    line: { color: '#2ca02c', width: 2.5 },
+    marker: { size: 6 },
+    hovertemplate: 'k=%{x}<br>Tanimoto=%{y:.3f}<br>n=%{customdata} models<extra></extra>',
+    customdata: byK.map(d => d.n_models),
+  }
+
+  const kunchevaTrace = {
+    x: xVals,
+    y: byK.map(d => d.kuncheva),
+    name: 'Kuncheva',
+    type: 'scatter',
+    mode: 'lines+markers',
+    line: { color: '#9467bd', width: 2 },
+    marker: { size: 5 },
+    hovertemplate: 'k=%{x}<br>Kuncheva=%{y:.3f}<extra></extra>',
+  }
+
+  const cwRelTrace = {
+    x: xVals,
+    y: byK.map(d => d.cw_rel),
+    name: 'CW_rel',
+    type: 'scatter',
+    mode: 'lines+markers',
+    line: { color: '#17becf', width: 2 },
+    marker: { size: 5 },
+    hovertemplate: 'k=%{x}<br>CW_rel=%{y:.3f}<extra></extra>',
+  }
+
+  // AUC trace (right y-axis)
+  const aucTrace = {
+    x: xVals,
+    y: byK.map(d => d.mean_auc),
+    name: 'Mean AUC',
+    type: 'scatter',
+    mode: 'lines+markers',
+    line: { color: '#d62728', width: 2, dash: 'dot' },
+    marker: { size: 5 },
+    yaxis: 'y2',
+    hovertemplate: 'k=%{x}<br>AUC=%{y:.3f}<extra></extra>',
+  }
+
+  // Model count bar (background)
+  const countTrace = {
+    x: xVals,
+    y: byK.map(d => d.n_models),
+    name: 'Models',
+    type: 'bar',
+    marker: { color: 'rgba(200,200,200,0.3)' },
+    yaxis: 'y3',
+    hovertemplate: 'k=%{x}<br>%{y} models<extra></extra>',
+  }
+
+  const layout = {
+    ...chartLayout(),
+    title: t('results.stabIndicesTitle'),
+    xaxis: { title: t('results.stabSparsity'), dtick: 1, gridcolor: c.grid },
+    yaxis: {
+      title: t('results.stabStabilityIndex'),
+      range: [-0.1, 1.05],
+      gridcolor: c.grid,
+    },
+    yaxis2: {
+      title: 'AUC',
+      overlaying: 'y',
+      side: 'right',
+      range: [0.4, 1.05],
+      showgrid: false,
+    },
+    yaxis3: {
+      overlaying: 'y',
+      side: 'right',
+      visible: false,
+    },
+    legend: { x: 0, y: -0.25, orientation: 'h' },
+    margin: { t: 50, b: 80, l: 60, r: 60 },
+    height: 450,
+  }
+
+  Plotly.newPlot(
+    indicesChartEl.value,
+    [countTrace, tanimotoTrace, kunchevaTrace, cwRelTrace, aucTrace],
+    layout,
+    { responsive: true, displayModeBar: false }
+  )
+}
+
+async function renderHeatmap() {
+  const hm = stabData.value?.feature_sparsity_heatmap
+  if (!hm?.features?.length || !heatmapChartEl.value) return
+  await ensurePlotly()
+  const c = chartColors()
+
+  const trace = {
+    z: hm.values,
+    x: hm.sparsity_levels.map(k => `k=${k}`),
+    y: hm.features,
+    type: 'heatmap',
+    colorscale: [
+      [0, '#ffffff'],
+      [0.2, '#fee8c8'],
+      [0.5, '#fdbb84'],
+      [0.8, '#e34a33'],
+      [1.0, '#b30000'],
+    ],
+    colorbar: { title: 'Prevalence', len: 0.8 },
+    hovertemplate: '%{y}<br>k=%{x}<br>Prevalence=%{z:.2f}<extra></extra>',
+  }
+
+  const height = Math.max(400, hm.features.length * 18 + 100)
+  const layout = {
+    ...chartLayout(),
+    title: t('results.stabFeatureHeatmapTitle'),
+    xaxis: { title: t('results.stabSparsity'), side: 'bottom' },
+    yaxis: { autorange: 'reversed', dtick: 1 },
+    margin: { t: 50, b: 60, l: 200, r: 80 },
+    height,
+  }
+
+  Plotly.newPlot(heatmapChartEl.value, [trace], layout, {
+    responsive: true,
+    displayModeBar: false,
+  })
+}
+
+async function renderDendrogram() {
+  const dendro = stabData.value?.dendrogram
+  const dm = stabData.value?.model_distance_matrix
+  if (!dm?.distances?.length || !dendroChartEl.value) return
+  await ensurePlotly()
+  const c = chartColors()
+
+  // Render as a distance heatmap with cluster annotations
+  const n = dm.labels.length
+  // Reorder by cluster assignment
+  const indices = Array.from({ length: n }, (_, i) => i)
+  if (dendro?.clusters) {
+    indices.sort((a, b) => {
+      const ca = dendro.clusters[a] || 0
+      const cb = dendro.clusters[b] || 0
+      return ca !== cb ? ca - cb : a - b
+    })
+  }
+
+  const reorderedLabels = indices.map(i => dm.labels[i])
+  const reorderedDist = indices.map(i => indices.map(j => dm.distances[i][j]))
+
+  // Color annotations by cluster
+  const clusterAnnotations = []
+  if (dendro?.clusters) {
+    for (let idx = 0; idx < indices.length; idx++) {
+      const origIdx = indices[idx]
+      const cl = dendro.clusters[origIdx]
+      clusterAnnotations.push(CLUSTER_COLORS[(cl - 1) % CLUSTER_COLORS.length])
+    }
+  }
+
+  const trace = {
+    z: reorderedDist,
+    x: reorderedLabels,
+    y: reorderedLabels,
+    type: 'heatmap',
+    colorscale: [
+      [0, '#08306b'],
+      [0.3, '#2171b5'],
+      [0.5, '#6baed6'],
+      [0.7, '#fee090'],
+      [1.0, '#d73027'],
+    ],
+    colorbar: { title: 'Tanimoto dist.', len: 0.8 },
+    hovertemplate: '%{x}<br>%{y}<br>Distance=%{z:.3f}<extra></extra>',
+  }
+
+  // Add cluster color sidebar as shapes
+  const shapes = []
+  if (dendro?.clusters) {
+    for (let idx = 0; idx < indices.length; idx++) {
+      shapes.push({
+        type: 'rect',
+        x0: -0.5,
+        x1: -0.15,
+        y0: idx - 0.5,
+        y1: idx + 0.5,
+        fillcolor: clusterAnnotations[idx],
+        line: { width: 0 },
+        xref: 'paper',
+        yref: 'y',
+      })
+    }
+  }
+
+  const size = Math.max(450, n * 8 + 100)
+  const layout = {
+    ...chartLayout(),
+    title: t('results.stabDendrogramTitle'),
+    xaxis: { showticklabels: n <= 80, tickangle: 90, tickfont: { size: 8 } },
+    yaxis: { showticklabels: n <= 80, autorange: 'reversed', tickfont: { size: 8 } },
+    margin: { t: 50, b: n <= 80 ? 120 : 30, l: n <= 80 ? 120 : 40, r: 60 },
+    shapes,
+    height: size,
+    width: size,
+  }
+
+  Plotly.newPlot(dendroChartEl.value, [trace], layout, {
+    responsive: true,
+    displayModeBar: false,
+  })
+}
+
+// ----------- Watchers -----------
+
+watch(view, async () => {
+  await nextTick()
+  renderActiveView()
+})
+
+watch(() => props.active, (active) => {
+  if (active && !stabData.value) fetchStability()
+})
+
+watch(() => props.jobId, () => {
+  stabData.value = null
+  if (props.active && props.jobId) fetchStability()
+})
+
+onMounted(() => {
+  if (props.active && props.jobId) fetchStability()
+})
+</script>
+
+<style scoped>
+.stability-tab { padding: 0.5rem 0; }
+
+.stab-desc {
+  color: var(--text-secondary, #666);
+  font-size: 0.9rem;
+  margin: 0 0 0.75rem 0;
+}
+
+.stab-view-selector {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.stab-view-selector button {
+  padding: 0.4rem 1rem;
+  border: 1px solid var(--border, #ddd);
+  background: var(--bg-secondary, #f8f9fa);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.15s;
+}
+.stab-view-selector button.active {
+  background: var(--accent, #4f46e5);
+  color: #fff;
+  border-color: var(--accent, #4f46e5);
+}
+.stab-view-selector button:hover:not(.active) {
+  background: var(--bg-hover, #e9ecef);
+}
+
+.stab-chart-wrap { margin: 0.5rem 0; }
+.stab-chart { width: 100%; min-height: 400px; }
+.stab-chart-tall { min-height: 500px; }
+
+.stab-stats-bar {
+  display: flex;
+  gap: 1.5rem;
+  padding: 0.6rem 1rem;
+  background: var(--bg-secondary, #f8f9fa);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  margin-top: 0.75rem;
+}
+
+.stab-clusters {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: var(--bg-secondary, #f8f9fa);
+  border-radius: 6px;
+}
+.stab-clusters h4 { margin: 0 0 0.5rem 0; font-size: 0.9rem; }
+.stab-cluster-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  font-size: 0.85rem;
+}
+.stab-cluster-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.loading {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-secondary, #888);
+}
+.error-text {
+  color: #d32f2f;
+  padding: 1rem;
+  background: #fdecea;
+  border-radius: 6px;
+  margin: 0.5rem 0;
+}
+</style>
