@@ -1876,7 +1876,7 @@ class TestProjectsDeep:
     async def test_update_project_name(self, auth_client):
         resp = await auth_client.post("/api/projects/", params={"name": "original"})
         pid = resp.json()["project_id"]
-        resp2 = await auth_client.patch(f"/api/projects/{pid}", params={"name": "renamed"})
+        resp2 = await auth_client.patch(f"/api/projects/{pid}", json={"name": "renamed"})
         assert resp2.status_code == 200
         assert resp2.json()["name"] == "renamed"
 
@@ -1884,13 +1884,13 @@ class TestProjectsDeep:
     async def test_update_project_description(self, auth_client):
         resp = await auth_client.post("/api/projects/", params={"name": "myproj"})
         pid = resp.json()["project_id"]
-        resp2 = await auth_client.patch(f"/api/projects/{pid}", params={"description": "A new description"})
+        resp2 = await auth_client.patch(f"/api/projects/{pid}", json={"description": "A new description"})
         assert resp2.status_code == 200
         assert resp2.json()["description"] == "A new description"
 
     @pytest.mark.asyncio
     async def test_update_nonexistent_project_returns_404(self, auth_client):
-        resp = await auth_client.patch("/api/projects/nonexistent", params={"name": "foo"})
+        resp = await auth_client.patch("/api/projects/nonexistent", json={"name": "foo"})
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
@@ -2818,7 +2818,7 @@ class TestProjectCRUD:
         resp = await auth_client.post("/api/projects/", params={"name": "Original"})
         pid = resp.json()["project_id"]
 
-        resp = await auth_client.patch(f"/api/projects/{pid}", params={"name": "Updated Name"})
+        resp = await auth_client.patch(f"/api/projects/{pid}", json={"name": "Updated Name"})
         assert resp.status_code == 200
         assert resp.json()["name"] == "Updated Name"
 
@@ -2827,7 +2827,7 @@ class TestProjectCRUD:
         resp = await auth_client.post("/api/projects/", params={"name": "Desc Proj"})
         pid = resp.json()["project_id"]
 
-        resp = await auth_client.patch(f"/api/projects/{pid}", params={"description": "New description"})
+        resp = await auth_client.patch(f"/api/projects/{pid}", json={"description": "New description"})
         assert resp.status_code == 200
         assert resp.json()["description"] == "New description"
 

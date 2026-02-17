@@ -279,83 +279,123 @@ async function renderHeatmap() {
 
 async function renderDendrogram() {
   const dendro = stabData.value?.dendrogram
-  const dm = stabData.value?.model_distance_matrix
-  if (!dm?.distances?.length || !dendroChartEl.value) return
+  if (!dendro?.linkage?.length || !dendroChartEl.value) return
   await ensurePlotly()
   const c = chartColors()
 
-  // Render as a distance heatmap with cluster annotations
-  const n = dm.labels.length
-  // Reorder by cluster assignment
-  const indices = Array.from({ length: n }, (_, i) => i)
-  if (dendro?.clusters) {
-    indices.sort((a, b) => {
-      const ca = dendro.clusters[a] || 0
-      const cb = dendro.clusters[b] || 0
-      return ca !== cb ? ca - cb : a - b
-    })
+  const Z = dendro.linkage       // [[idx1, idx2, dist, count], ...]
+  const labels = dendro.labels
+  const leafOrder = dendro.leaf_order || []
+  const clusters = dendro.clusters || []
+  const n = labels.length
+
+  // Build dendrogram tree coordinates from linkage matrix
+  // Each merge i creates a new node at index (n + i)
+  // nodePos[id] = { x, yMin, yMax } for each node/leaf
+  const nodePos = {}
+
+  // Place leaves at positions 0..n-1 in leaf order
+  const leafX = {}
+  for (let i = 0; i < leafOrder.length; i++) {
+    leafX[leafOrder[i]] = i
+    nodePos[leafOrder[i]] = { x: i, h: 0 }
   }
 
-  const reorderedLabels = indices.map(i => dm.labels[i])
-  const reorderedDist = indices.map(i => indices.map(j => dm.distances[i][j]))
+  // Build U-shaped links from linkage
+  const lineX = []
+  const lineY = []
+  for (let i = 0; i < Z.length; i++) {
+    const [a, b, dist] = Z[i]
+    const left = nodePos[a]
+    const right = nodePos[b]
+    if (!left || !right) continue
 
-  // Color annotations by cluster
-  const clusterAnnotations = []
-  if (dendro?.clusters) {
-    for (let idx = 0; idx < indices.length; idx++) {
-      const origIdx = indices[idx]
-      const cl = dendro.clusters[origIdx]
-      clusterAnnotations.push(CLUSTER_COLORS[(cl - 1) % CLUSTER_COLORS.length])
-    }
+    const lx = left.x
+    const rx = right.x
+    const lh = left.h
+    const rh = right.h
+    const mergeH = dist
+
+    // U-shape: left vertical, horizontal, right vertical
+    lineX.push(lx, lx, rx, rx, null)
+    lineY.push(lh, mergeH, mergeH, rh, null)
+
+    // New merged node position
+    nodePos[n + i] = { x: (lx + rx) / 2, h: mergeH }
   }
 
-  const trace = {
-    z: reorderedDist,
-    x: reorderedLabels,
-    y: reorderedLabels,
-    type: 'heatmap',
-    colorscale: [
-      [0, '#08306b'],
-      [0.3, '#2171b5'],
-      [0.5, '#6baed6'],
-      [0.7, '#fee090'],
-      [1.0, '#d73027'],
-    ],
-    colorbar: { title: 'Tanimoto dist.', len: 0.8 },
-    hovertemplate: '%{x}<br>%{y}<br>Distance=%{z:.3f}<extra></extra>',
+  // Dendrogram line trace
+  const dendroTrace = {
+    x: lineX,
+    y: lineY,
+    type: 'scatter',
+    mode: 'lines',
+    line: { color: '#333', width: 1.5 },
+    hoverinfo: 'skip',
+    showlegend: false,
   }
 
-  // Add cluster color sidebar as shapes
-  const shapes = []
-  if (dendro?.clusters) {
-    for (let idx = 0; idx < indices.length; idx++) {
-      shapes.push({
-        type: 'rect',
-        x0: -0.5,
-        x1: -0.15,
-        y0: idx - 0.5,
-        y1: idx + 0.5,
-        fillcolor: clusterAnnotations[idx],
-        line: { width: 0 },
-        xref: 'paper',
-        yref: 'y',
-      })
-    }
+  // Leaf markers colored by cluster
+  const leafXArr = leafOrder.map((_, i) => i)
+  const leafYArr = leafOrder.map(() => 0)
+  const leafColors = leafOrder.map(idx => {
+    const cl = clusters[idx] || 1
+    return CLUSTER_COLORS[(cl - 1) % CLUSTER_COLORS.length]
+  })
+  const leafLabels = leafOrder.map(idx => labels[idx] || `M${idx}`)
+
+  const leafTrace = {
+    x: leafXArr,
+    y: leafYArr,
+    type: 'scatter',
+    mode: 'markers',
+    marker: { size: 8, color: leafColors, line: { width: 1, color: '#fff' } },
+    text: leafLabels,
+    hovertemplate: '%{text}<extra></extra>',
+    showlegend: false,
   }
 
-  const size = Math.max(450, n * 8 + 100)
+  // Cutoff line at 0.7
+  const cutoffTrace = {
+    x: [-0.5, n - 0.5],
+    y: [0.7, 0.7],
+    type: 'scatter',
+    mode: 'lines',
+    line: { color: '#d62728', width: 1, dash: 'dash' },
+    hoverinfo: 'skip',
+    showlegend: false,
+  }
+
   const layout = {
     ...chartLayout(),
     title: t('results.stabDendrogramTitle'),
-    xaxis: { showticklabels: n <= 80, tickangle: 90, tickfont: { size: 8 } },
-    yaxis: { showticklabels: n <= 80, autorange: 'reversed', tickfont: { size: 8 } },
-    margin: { t: 50, b: n <= 80 ? 120 : 30, l: n <= 80 ? 120 : 40, r: 60 },
-    shapes,
-    height: size,
-    width: size,
+    xaxis: {
+      showticklabels: n <= 60,
+      tickmode: 'array',
+      tickvals: leafXArr,
+      ticktext: leafLabels,
+      tickangle: 90,
+      tickfont: { size: 7 },
+      range: [-1, n],
+    },
+    yaxis: {
+      title: 'Tanimoto distance',
+      gridcolor: c.grid,
+      rangemode: 'tozero',
+    },
+    margin: { t: 50, b: n <= 60 ? 120 : 40, l: 60, r: 30 },
+    height: 500,
+    annotations: [{
+      x: n - 1,
+      y: 0.7,
+      text: 'cutoff = 0.7',
+      showarrow: false,
+      font: { size: 10, color: '#d62728' },
+      yshift: 10,
+    }],
   }
 
-  Plotly.newPlot(dendroChartEl.value, [trace], layout, {
+  Plotly.newPlot(dendroChartEl.value, [dendroTrace, leafTrace, cutoffTrace], layout, {
     responsive: true,
     displayModeBar: false,
   })
