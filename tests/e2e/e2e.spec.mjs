@@ -53,7 +53,7 @@ test.describe.serial('PredomicsApp E2E', () => {
     await page.waitForTimeout(1000)
 
     // Look for register link/tab
-    const registerLink = page.locator('a:has-text("Register"), button:has-text("Register"), .register-link')
+    const registerLink = page.locator('a:has-text("Register"), button:has-text("Register"), .register-link').first()
     if (await registerLink.isVisible()) {
       await registerLink.click()
       await page.waitForTimeout(500)
@@ -69,8 +69,8 @@ test.describe.serial('PredomicsApp E2E', () => {
       await confirmField.fill(TEST_PASSWORD)
     }
 
-    // Submit
-    const submitBtn = page.locator('button[type="submit"], button:has-text("Register"), button:has-text("Create")')
+    // Submit — use .btn-primary to avoid matching the Register tab button
+    const submitBtn = page.locator('button[type="submit"].btn-primary, button.btn-primary:has-text("Create")')
     await submitBtn.click()
     await page.waitForTimeout(3000)
 
