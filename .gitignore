@@ -47,4 +47,3 @@ certbot/
 
 # Misc artifacts
 .project_planning.md
-/package-lock.json
