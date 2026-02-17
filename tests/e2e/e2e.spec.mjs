@@ -112,21 +112,18 @@ test.describe.serial('PredomicsApp E2E', () => {
     await page.waitForTimeout(2000)
     await dismissOverlays(page)
 
-    // Click create project button
-    const createBtn = page.locator('button:has-text("New Project"), button:has-text("Create")')
-    await createBtn.click()
+    // Click the "+" button to reveal the create form
+    const newBtn = page.locator('button.btn-new, button[title="New project"]')
+    await newBtn.click()
     await page.waitForTimeout(500)
 
-    // Fill project form
+    // Fill project name
     const nameInput = page.locator('input[placeholder*="name" i], input[name="name"]')
-    if (await nameInput.isVisible()) {
-      await nameInput.fill('E2E Test Project')
-    }
+    await nameInput.fill('E2E Test Project')
 
-    const submitBtn = page.locator('.modal button:has-text("Create"), .modal button[type="submit"]')
-    if (await submitBtn.isVisible()) {
-      await submitBtn.click()
-    }
+    // Click "Create" button in the form
+    const submitBtn = page.locator('button:has-text("Create")')
+    await submitBtn.click()
     await page.waitForTimeout(3000)
 
     // Extract project ID from URL or API
