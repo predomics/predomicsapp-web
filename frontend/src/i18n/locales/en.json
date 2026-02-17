@@ -67,7 +67,9 @@
     "startAnalyzing": "Start analyzing your data in minutes",
     "startNow": "Start Now",
     "openSource": "Open Source",
-    "openSourceDesc": "GPL-3.0 licensed. Inspect, extend, and contribute to the codebase."
+    "openSourceDesc": "GPL-3.0 licensed. Inspect, extend, and contribute to the codebase.",
+    "ecosystemNetwork": "Ecosystem Network",
+    "ecosystemNetworkDesc": "Visualize species co-abundance networks with taxonomic coloring, Louvain community detection, and FBM overlay to bridge ecology with predictive models."
   },
   "login": {
     "title": "PredomicsApp",

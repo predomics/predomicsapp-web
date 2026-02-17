@@ -211,6 +211,7 @@ const capabilities = computed(() => [
   { icon: '\u{25A3}', title: t('home.dashboardOverview'), desc: t('home.dashboardOverviewDesc') },
   { icon: '\u{2235}', title: t('home.projectNotes'), desc: t('home.projectNotesDesc') },
   { icon: '\u{21C4}', title: t('home.publicSharing'), desc: t('home.publicSharingDesc') },
+  { icon: '\u{25CE}', title: t('home.ecosystemNetwork'), desc: t('home.ecosystemNetworkDesc') },
 ])
 
 const useCases = [
