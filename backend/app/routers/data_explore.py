@@ -10,6 +10,8 @@ from ..core.deps import get_current_user, get_project_with_access
 from ..models.db_models import User, Project
 from ..services import data_analysis
 from ..services import msp_annotations
+from ..services import coabundance
+from ..services import storage
 
 router = APIRouter(prefix="/data-explore", tags=["data-explore"])
 
@@ -192,6 +194,47 @@ async def get_pcoa(
         x_path, y_path, metric=metric, feature_names=feature_names,
     )
     return pcoa_result
+
+
+@router.get("/{project_id}/coabundance-network")
+async def get_coabundance_network(
+    project_id: str,
+    min_prevalence_pct: float = 30.0,
+    correlation_threshold: float = 0.3,
+    class_filter: str = "all",
+    features: str = "",
+    job_id: str = "",
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compute co-abundance ecosystem network from the abundance matrix (viewer access).
+
+    Returns nodes with taxonomy coloring, edges with Spearman correlations,
+    Louvain community modules, and optional FBM annotation.
+    """
+    if class_filter not in ("all", "0", "1"):
+        raise HTTPException(400, f"Invalid class_filter: {class_filter}. Choose from all, 0, 1")
+
+    project, _ = await get_project_with_access(project_id, user, db, require_role="viewer")
+    x_path, y_path = _resolve_train_files(project)
+
+    feature_names = None
+    if features:
+        feature_names = [f.strip() for f in features.split(",") if f.strip()]
+
+    job_results = None
+    if job_id:
+        job_results = storage.get_job_result(project_id, job_id)
+
+    result = coabundance.compute_coabundance_network(
+        x_path, y_path,
+        min_prevalence_pct=min_prevalence_pct,
+        correlation_threshold=correlation_threshold,
+        class_filter=class_filter,
+        feature_names=feature_names,
+        job_results=job_results,
+    )
+    return result
 
 
 @router.post("/msp-annotations")

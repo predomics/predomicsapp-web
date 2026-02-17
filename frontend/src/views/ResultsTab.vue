@@ -136,6 +136,7 @@
       <button v-if="juryData" :class="{ active: subTab === 'jury' }" @click="subTab = 'jury'">{{ $t('results.jury') }}</button>
       <button :class="{ active: subTab === 'comparative' }" @click="subTab = 'comparative'">{{ $t('results.comparative') }}</button>
       <button v-if="population.length > 1" :class="{ active: subTab === 'copresence' }" @click="subTab = 'copresence'">{{ $t('results.copresence') }}</button>
+      <button :class="{ active: subTab === 'ecosystem' }" @click="subTab = 'ecosystem'">{{ $t('results.ecosystem') }}</button>
       <div class="export-dropdown-wrap" v-if="detail">
         <button class="btn-sm btn-export" @click="exportMenuOpen = !exportMenuOpen">
           &#8615; {{ $t('results.export') }}
@@ -872,6 +873,19 @@
       </p>
     </div>
 
+    <!-- ============================================================ -->
+    <!-- ECOSYSTEM SUB-TAB                                           -->
+    <!-- ============================================================ -->
+    <div v-if="detail && subTab === 'ecosystem'" class="sub-content">
+      <EcosystemTab
+        :projectId="route.params.id"
+        :jobId="selectedJobId || ''"
+        :population="population"
+        :classLabels="[]"
+        :active="subTab === 'ecosystem'"
+      />
+    </div>
+
     <!-- Empty states -->
     <div v-if="!detail && jobs.length === 0" class="empty">
       {{ $t('results.noJobsYet') }}
@@ -893,6 +907,7 @@ import axios from 'axios'
 import ValidateModal from '../components/ValidateModal.vue'
 import { useI18n } from 'vue-i18n'
 import SvgIcon from '../components/SvgIcon.vue'
+import EcosystemTab from '../components/results/EcosystemTab.vue'
 // Lazy-load Plotly for better initial page load
 let Plotly = null
 async function ensurePlotly() {
