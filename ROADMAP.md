@@ -1,6 +1,6 @@
 # PredomicsApp-Web — Roadmap
 
-_Last updated: 2026-02-16_
+_Last updated: 2026-02-18_
 
 ---
 
@@ -455,3 +455,184 @@ Multi-language support starting with French.
 - `localStorage.locale` persistence across sessions
 - Navbar links translated via `$t('nav.dashboard')` etc.
 - Backend: `Accept-Language` header parsing in `core/errors.py` for translated error messages
+
+---
+
+## Phase 5: Advanced Analytics & Population Mining
+
+### 38. t-SNE & UMAP Ordination ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
+
+Add t-SNE and UMAP as alternative dimensionality reduction methods alongside PCoA.
+
+- Unified `/api/data-explore/{pid}/ordination` endpoint with `method` param (pcoa, tsne, umap)
+- Backend: `compute_tsne()` and `compute_umap()` in `data_analysis.py` using precomputed distance matrices
+- Method-specific parameters: perplexity (t-SNE), n_neighbors/min_dist (UMAP)
+- Shared `_load_and_prepare()` helper with subsampling (max 1000 samples)
+- Dynamic axis labels: "PCo1 (X%)" for PCoA, "t-SNE 1" / "UMAP 1" for others
+- PERMANOVA and 95% confidence ellipses for all methods
+- Added to DataTab, ResultsTab (Population), and DataExploreTab
+- Dependencies: `scikit-learn>=1.0`, `umap-learn>=0.5`
+
+### 39. CI-based FBM Selection (Blaise Method) ✅
+**Priority:** MEDIUM | **Effort:** Low | **Status:** Done
+
+Add the Blaise confidence interval method as alternative to standard Wald CI for FBM filtering.
+
+- Dropdown in Population and Co-Presence tabs to choose between Standard CI and Blaise CI
+- Blaise formula: `threshold = r - (0.5/n + 1.96 * sqrt(r*(1-r)/n))` — adds continuity correction
+- Shared `fbmMethod` ref between Population and Co-Presence tabs
+- i18n: "Standard CI" / "Blaise CI" in EN/FR
+
+### 40. Accuracy-Weighted Co-Presence Network ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
+
+Enhance co-presence analysis with model fitness weighting (Shasha Cui internship, 2017).
+
+- Toggle checkbox in Co-Presence controls for accuracy-weighted mode
+- Per-node mean accuracy: `meanAccuracy[feature] = sum(model.fit) / count`
+- Per-edge accuracy-weighted counts: `wObs = sum(model.fit for co-occurring pairs)`
+- Weighted expected: `wExp = (accSum_i * accSum_j) / totalAccSum`
+- Weighted ratio: `wRatio = wObs / wExp`
+- Prevalence chart: secondary axis with mean accuracy diamonds
+- Network: node size by accuracy, edge width by weighted ratio, accuracy in hover
+- Stats table: "W. Obs" and "W. Ratio" columns when weighted mode is on
+- Hypergeometric test unchanged (stays on binary integer counts for statistical validity)
+
+### 41. Model Basket ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
+
+Bookmark individual models from any job's population into a persistent curated collection.
+
+- `useModelBasket.js` composable with localStorage persistence per project (max 50 models)
+- Star toggle (★/☆) in Population table to add/remove models
+- Basket sub-tab with count badge in Results tab nav bar
+- Bookmarked models table with expandable feature chips, remove button
+- Metrics comparison grouped bar chart (AUC, Accuracy, Sensitivity, Specificity per model)
+- Feature overlap horizontal stacked bar chart with positive/negative direction
+- Consensus features display (features common to all basket models)
+- Feature coefficient heatmap (features × models, blue-white-red colorscale)
+- Cross-job support: basket items store data snapshots, survive job deletion
+
+### 42. Multiple Community Detection Algorithms ✅
+**Priority:** MEDIUM | **Effort:** Low | **Status:** Done
+
+Add dropdown to choose between community detection methods in the Ecosystem network.
+
+- Backend: `_detect_communities(G, method, seed)` dispatcher in `coabundance.py`
+- Supported algorithms: Louvain (default), Greedy modularity maximization, Label propagation
+- `community_method` parameter added to `compute_coabundance_network()` and cache key
+- Endpoint validation: rejects unknown methods with HTTP 400
+- Frontend: dropdown in EcosystemTab controls, auto-refetch on change
+- Graceful fallback to singleton communities on algorithm failure
+- i18n: "Community" / "Greedy modularity" / "Label propagation" in EN/FR
+
+### 43. Module Niche Zoom ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
+
+Select a network module and zoom into a higher-resolution sub-network for detailed niche analysis.
+
+- Zoom button per module in the sidebar (magnifying glass icon)
+- Extracts member species, re-calls `/coabundance-network` with `features=members` and halved thresholds
+- `displayedNetwork` computed property for seamless switching between full and zoomed views
+- Breadcrumb navigation bar showing module ID, member count, and "Back to full network" button
+- `zoomOut()` restores the full network; parameter changes auto-clear zoom state
+- Updated `renderNetwork()` to use `displayedNetwork.value` throughout
+- Stats bar, chart visibility, and taxonomy legend all react to zoom state
+- i18n: "Zoom into this module" / "Back to full network" in EN/FR
+
+### 44. Aberrant Correlation Diagnostic ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
+
+QC scatter plot comparing per-class Spearman correlations to detect prevalence filtering artifacts.
+
+- Backend: `compute_aberrant_correlations()` in `data_analysis.py` — computes full Spearman correlation matrices per class, extracts upper-triangle pairs
+- Prevalence filtering (default 30%), subsampling to 500 features if needed, max 5000 pairs
+- Returns `{pairs: [{f1, f2, r0, r1}], n_features, n_pairs, feature_names}`
+- New endpoint: `GET /{project_id}/aberrant-correlations` with `min_prevalence_pct` param
+- Frontend: new "Aberrant Correlation Diagnostic" sub-tab in DataExploreTab
+- Plotly scatter: x = Class 0 rho, y = Class 1 rho, continuous colorscale by deviation from diagonal
+- Dashed y=x reference line, equal aspect ratio axes [-1.05, 1.05]
+- i18n: aberrant correlation labels in EN/FR
+
+### 45. Dual-Network Comparison ✅
+**Priority:** HIGH | **Effort:** Medium | **Status:** Done
+
+Side-by-side patient vs. control co-abundance ecosystems highlighting common and condition-specific interactions.
+
+- New endpoint: `GET /{project_id}/dual-network` — computes both class networks in one call
+- Edge comparison: identifies common edges (present in both), class-0-specific, and class-1-specific
+- Each edge annotated with `shared` boolean flag for coloring
+- Frontend: "Dual network" checkbox toggle in EcosystemTab controls
+- Side-by-side Plotly panels in a CSS grid (responsive: stacks on mobile)
+- Comparison stats header: common edge count + specific counts per class
+- Edge coloring: shared = gray (subtle), class-0-specific = teal, class-1-specific = orange
+- Auto-refetch on parameter changes when dual mode is active
+- i18n: "Dual network" / "Common edges" / "Controls" / "Patients" in EN/FR
+
+### 46. Alluvial/Sankey Module Correspondence ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
+
+Visualize how network modules reorganize between patient and control ecosystems via an alluvial/Sankey diagram.
+
+- Backend: module correspondence computation added to `get_dual_network` endpoint in `data_explore.py`
+- Species→module mapping per class, intersection of common species, flow counting between module pairs
+- `sankey_links` array of `{source_module, target_module, value}` in dual-network response
+- Frontend: Plotly Sankey trace in `EcosystemTab.vue` below dual-network panels
+- Node labels combine class label, module ID, and dominant phylum
+- Link colors: semi-transparent source module color (handles both rgb() and hex)
+- Rendered automatically when dual mode is active and sankey_links has data
+- i18n: "Module Correspondence" / "Correspondance des modules" in EN/FR
+
+### 47. External Network Import ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
+
+Upload and display external network JSON files (e.g. from SCAPIS) with FBM signature annotation.
+
+- Backend: 4 new endpoints in `data_explore.py`:
+  - `POST /{project_id}/external-networks` — upload JSON (max 10MB, validates nodes/edges arrays)
+  - `GET /{project_id}/external-networks` — list uploaded networks
+  - `GET /{project_id}/external-networks/{network_id}` — retrieve full network data
+  - `DELETE /{project_id}/external-networks/{network_id}` — delete (editor role)
+- Storage: `data/projects/{project_id}/networks/{uuid}.json`
+- Frontend: external network section in EcosystemTab with select dropdown, upload button, delete button
+- Rendering: uses fixed positions (x, y from JSON) if available, organic layout fallback
+- FBM annotation: species matching FBM population features highlighted with gold color, diamond shape, orange border
+- Edge styling: positive = solid gray, negative = dashed red, width scaled by |weight|
+- i18n: "External Network" / "Réseau externe" in EN/FR
+
+### 48. Ecosystem-guided FBM Filtering ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
+
+Filter the Family of Best Models by network module membership to keep only ecologically coherent models.
+
+- Backend: `POST /{project_id}/fbm-module-filter` endpoint in `data_explore.py`
+- Loads job results population, computes co-abundance network to get module assignments
+- Per-model metrics: module coverage (fraction in selected modules), module coherence (fraction in same module)
+- Filters models with ≥50% features in selected modules, sorted by coverage then fitness
+- Frontend: "FBM Module Filter" section in EcosystemTab with module checkboxes, apply/clear buttons
+- Results table with rank, fit, k, language, coverage bar, coherence, in-module count
+- CSV export of filtered models
+- Event integration: emits `module-filter-applied` to parent ResultsTab
+- Population table: blue highlight + "M" badge for filtered models
+- i18n: 12 keys in EN/FR (filter title, description, coverage, coherence, export, etc.)
+
+### 49. Signature Zoo ✅
+**Priority:** MEDIUM | **Effort:** High | **Status:** Done
+
+Curated, searchable database of published biomarker signatures for cross-study comparison and reuse.
+
+- Backend: new `signature_zoo.py` router with 7 endpoints:
+  - `GET /api/signature-zoo/` — list all signatures with optional disease/method/search filters
+  - `GET /api/signature-zoo/compare` — compare 2+ signatures (Jaccard overlap, performance, common features)
+  - `GET /api/signature-zoo/{id}` — get single signature
+  - `POST /api/signature-zoo/` — create signature (auth required)
+  - `PUT /api/signature-zoo/{id}` — update (auth required)
+  - `DELETE /api/signature-zoo/{id}` — delete (admin only)
+  - `POST /api/signature-zoo/import-from-job` — create from completed job's best model
+- File-based JSON storage at `data/signature_zoo.json` with fcntl file locking
+- 4 seed signatures: Cirrhosis (Qin 2014), CRC (Zeller 2014), Obesity (Le Chatelier 2013), T2D (Karlsson 2013)
+- Frontend: `SignatureZooView.vue` with card grid, filters (disease/method/text), detail modal, compare mode
+- Compare mode: Plotly performance bars, Jaccard overlap matrix, common features, feature presence chart
+- Route `/signature-zoo` in router.js, navbar link in App.vue
+- 35 i18n keys in EN/FR
