@@ -56,8 +56,9 @@ COPY predomicsapp-web/backend/ backend/
 # Copy built frontend into static directory
 COPY --from=frontend-builder /app/frontend/dist backend/app/static/
 
-# Copy demo dataset
+# Copy demo datasets
 COPY predomicsapp-web/data/qin2014_cirrhosis/ data/qin2014_cirrhosis/
+COPY predomicsapp-web/data/derosa2025_ici/ data/derosa2025_ici/
 
 # Create directories for runtime data
 RUN mkdir -p data/uploads data/projects
