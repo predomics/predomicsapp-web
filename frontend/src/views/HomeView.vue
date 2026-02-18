@@ -231,10 +231,10 @@ const useCases = [
   },
   {
     icon: '\u{2318}',
-    title: 'Treatment Response',
-    description: 'Predict immunotherapy response from baseline gut microbiome in melanoma patients.',
-    stats: { AUC: '0.87', features: 'k=5', samples: '112' },
-    reference: 'Gopalakrishnan et al., Science 2018',
+    title: 'ICI Response Prediction',
+    description: 'Predict immune checkpoint inhibitor response (OS12) from baseline gut microbiome in the NSAT cohort.',
+    stats: { AUC: '0.87', features: 'k=71', samples: '417' },
+    reference: 'Derosa et al., 2025',
   },
   {
     icon: '\u{2623}',

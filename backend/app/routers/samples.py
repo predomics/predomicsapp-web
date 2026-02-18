@@ -28,6 +28,16 @@ SAMPLE_DATASETS = {
             {"filename": "Ytest.tsv", "features_in_rows": False},
         ],
     },
+    "derosa2025_ici": {
+        "name": "Derosa2025 ICI Response",
+        "description": "Derosa L et al., 2025 — 2,834 MSP features, 229 discovery + 188 validation samples, OS12 endpoint",
+        "files": [
+            {"filename": "Xtrain.tsv", "features_in_rows": True},
+            {"filename": "Ytrain.tsv", "features_in_rows": False},
+            {"filename": "Xtest.tsv", "features_in_rows": True},
+            {"filename": "Ytest.tsv", "features_in_rows": False},
+        ],
+    },
 }
 
 
