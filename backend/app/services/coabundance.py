@@ -1,7 +1,7 @@
 """Co-abundance ecosystem network service.
 
 Computes species co-abundance networks from the abundance matrix using
-Spearman correlation, with community detection (Louvain) and taxonomic
+Spearman correlation, with community detection and taxonomic
 coloring inspired by the Interpred approach and SCAPIS ecosystem code.
 """
 
@@ -28,9 +28,9 @@ _CACHE_TTL = 600  # 10 minutes
 def _cache_key(
     x_path: str, y_path: str, min_prevalence_pct: float,
     correlation_threshold: float, class_filter: str,
-    features_csv: str,
+    features_csv: str, community_method: str = "louvain",
 ) -> tuple:
-    return (x_path, y_path, min_prevalence_pct, correlation_threshold, class_filter, features_csv)
+    return (x_path, y_path, min_prevalence_pct, correlation_threshold, class_filter, features_csv, community_method)
 
 
 def _get_cached(key: tuple) -> dict | None:
@@ -51,6 +51,36 @@ def _set_cached(key: tuple, result: dict) -> None:
             del _cache[k]
 
 
+def _detect_communities(G, method: str = "louvain", seed: int = 42) -> list:
+    """Dispatch community detection to the chosen algorithm.
+
+    Supported methods:
+      - "louvain": Louvain modularity optimization (default)
+      - "greedy": Greedy modularity maximization
+      - "label_propagation": Asynchronous label propagation
+
+    Falls back to one-community-per-node on any error.
+    """
+    import networkx as nx
+
+    try:
+        if method == "louvain":
+            communities = nx.community.louvain_communities(G, seed=seed)
+        elif method == "greedy":
+            communities = nx.community.greedy_modularity_communities(G)
+        elif method == "label_propagation":
+            communities = list(nx.community.label_propagation_communities(G))
+        else:
+            # Unknown method — fall back to Louvain
+            logger.warning("Unknown community method '%s', falling back to louvain", method)
+            communities = nx.community.louvain_communities(G, seed=seed)
+    except Exception:
+        logger.warning("Community detection '%s' failed, falling back to singletons", method)
+        communities = [{n} for n in G.nodes()]
+
+    return communities
+
+
 def compute_coabundance_network(
     x_path: str,
     y_path: str,
@@ -60,6 +90,7 @@ def compute_coabundance_network(
     class_filter: str = "all",
     feature_names: list[str] | None = None,
     job_results: dict | None = None,
+    community_method: str = "louvain",
 ) -> dict[str, Any]:
     """Compute a co-abundance network from the abundance matrix.
 
@@ -77,7 +108,7 @@ def compute_coabundance_network(
         Dict with nodes, edges, modules, taxonomy_legend, stats.
     """
     features_csv = ",".join(sorted(feature_names)) if feature_names else ""
-    key = _cache_key(x_path, y_path, min_prevalence_pct, correlation_threshold, class_filter, features_csv)
+    key = _cache_key(x_path, y_path, min_prevalence_pct, correlation_threshold, class_filter, features_csv, community_method)
     cached = _get_cached(key)
     if cached is not None:
         return cached
@@ -201,12 +232,11 @@ def compute_coabundance_network(
     # Only include nodes that have at least one edge
     node_ids = sorted(edge_nodes)
 
-    # Community detection (Louvain)
+    # Community detection (configurable method)
+    communities = _detect_communities(G, method=community_method, seed=42)
     try:
-        communities = nx.community.louvain_communities(G, seed=42)
         modularity = nx.community.modularity(G, communities)
     except Exception:
-        communities = [{n} for n in node_ids]
         modularity = 0.0
 
     node_module: dict[str, int] = {}

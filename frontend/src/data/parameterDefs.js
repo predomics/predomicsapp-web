@@ -290,6 +290,14 @@ export const PARAM_DEFS = [
     description: 'Prune models based on feature importances (remove models with MDA < 0).',
   },
   {
+    key: 'min_experts', label: 'Min experts', category: 'voting', level: 'basic', inputType: 'number', defaultValue: 0,
+    description: 'Minimum number of jury experts. 0 = no minimum (use all that pass filters). Warns if fewer experts remain.', min: 0, step: 1,
+  },
+  {
+    key: 'max_experts', label: 'Max experts', category: 'voting', level: 'basic', inputType: 'number', defaultValue: 0,
+    description: 'Maximum number of jury experts. 0 = no limit. Top models by fitness are kept when the limit is reached.', min: 0, step: 1,
+  },
+  {
     key: 'min_perf', label: 'Min performance', category: 'voting', level: 'advanced', inputType: 'number', defaultValue: 0.5,
     description: 'Required sensitivity AND specificity for a judge model. >= 0.5 avoids single-choice bias.', min: 0, max: 1, step: 0.05,
   },

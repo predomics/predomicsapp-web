@@ -103,6 +103,12 @@ const miniStatus = computed(() => {
 async function loadProject() {
   if (projectId.value) {
     await store.fetchOne(projectId.value)
+    // Immediately fetch full job list so store.current.jobs contains objects
+    // (the project endpoint only returns job IDs as strings)
+    try {
+      const { data } = await axios.get(`/api/analysis/${projectId.value}/jobs`)
+      if (store.current) store.current.jobs = data
+    } catch { /* ignore — ResultsTab will load its own list */ }
   }
 }
 
@@ -125,8 +131,8 @@ async function onJobCompleted(jobId) {
   }
 }
 
-function onJobFailed(jobId) {
-  loadProject()
+async function onJobFailed(jobId) {
+  await loadProject()
   addToast(t('projectDashboard.jobFailed'), 'error', 8000)
   notifyJobFailed(project.value?.name || 'Project', { jobId })
 }

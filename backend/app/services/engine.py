@@ -131,6 +131,7 @@ def write_param_yaml(
 
     voting = _merge("voting", {
         "vote": False, "fbm_ci_alpha": 0.05, "prune_before_voting": False,
+        "min_experts": 0, "max_experts": 0,
         "min_perf": 0.5, "min_diversity": 5, "method": "Majority",
         "method_threshold": 0.5, "threshold_windows_pct": 5, "complete_display": False,
     })

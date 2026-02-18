@@ -200,6 +200,14 @@
         <section class="section viz-section" v-if="vizTab === 'pcoa'">
           <div class="pcoa-controls">
             <label class="pcoa-control-item">
+              <span>{{ $t('data.ordinationMethod') }}</span>
+              <select v-model="pcoaMethod" @change="loadPcoa">
+                <option value="pcoa">PCoA</option>
+                <option value="tsne">t-SNE</option>
+                <option value="umap">UMAP</option>
+              </select>
+            </label>
+            <label class="pcoa-control-item">
               <span>{{ $t('data.pcoaMetric') }}</span>
               <select v-model="pcoaMetric" @change="loadPcoa">
                 <option value="braycurtis">Bray-Curtis</option>
@@ -207,6 +215,18 @@
                 <option value="jaccard">Jaccard</option>
                 <option value="cosine">{{ $t('data.cosine') }}</option>
               </select>
+            </label>
+            <label v-if="pcoaMethod === 'tsne'" class="pcoa-control-item">
+              <span>{{ $t('data.perplexity') }}</span>
+              <input type="number" v-model.number="tsnePerplexity" min="5" max="100" step="5" @change="loadPcoa" class="param-input" />
+            </label>
+            <label v-if="pcoaMethod === 'umap'" class="pcoa-control-item">
+              <span>{{ $t('data.nNeighbors') }}</span>
+              <input type="number" v-model.number="umapNeighbors" min="2" max="100" step="1" @change="loadPcoa" class="param-input" />
+            </label>
+            <label v-if="pcoaMethod === 'umap'" class="pcoa-control-item">
+              <span>{{ $t('data.minDist') }}</span>
+              <input type="number" v-model.number="umapMinDist" min="0" max="1" step="0.05" @change="loadPcoa" class="param-input" />
             </label>
             <label class="pcoa-control-item">
               <span>{{ $t('data.pcoaFeatures') }}</span>
@@ -281,12 +301,16 @@ const mspAnnotations = ref({})
 const vizTab = ref('prevalence')
 const pcoaData = ref(null)
 const loadingPcoa = ref(false)
+const pcoaMethod = ref('pcoa')
 const pcoaMetric = ref('braycurtis')
 const pcoaDim = ref('2d')
 const pcoaShowEllipses = ref(true)
 const pcoaFbmJobId = ref('')
 const pcoaJobs = ref([])
 const pcoaFbmFeatures = ref([])
+const tsnePerplexity = ref(30)
+const umapNeighbors = ref(15)
+const umapMinDist = ref(0.1)
 
 // Top N features control — shared across all plots
 const abundanceLogScale = ref(false)
@@ -595,11 +619,18 @@ async function loadPcoa() {
   if (!hasTrainData.value) return
   loadingPcoa.value = true
   try {
-    const params = { metric: pcoaMetric.value }
+    const params = { method: pcoaMethod.value, metric: pcoaMetric.value }
+    if (pcoaMethod.value === 'tsne') {
+      params.perplexity = tsnePerplexity.value
+    } else if (pcoaMethod.value === 'umap') {
+      params.n_neighbors = umapNeighbors.value
+      params.min_dist = umapMinDist.value
+    }
+    if (pcoaDim.value === '3d') params.n_components = 3
     if (pcoaFbmFeatures.value.length > 0) {
       params.features = pcoaFbmFeatures.value.join(',')
     }
-    const { data } = await axios.get(`/api/data-explore/${projectId.value}/pcoa`, { params })
+    const { data } = await axios.get(`/api/data-explore/${projectId.value}/ordination`, { params })
     pcoaData.value = data
     await nextTick()
     renderPcoaChart()
@@ -607,7 +638,7 @@ async function loadPcoa() {
     if (e.response?.status === 404) {
       pcoaData.value = null
     } else {
-      console.error('Failed to load PCoA:', e)
+      console.error('Failed to load ordination:', e)
     }
   } finally {
     loadingPcoa.value = false
@@ -1053,6 +1084,16 @@ async function renderPcoaChart() {
   const c = chartColors()
   const d = pcoaData.value
   const ve = d.variance_explained
+  const method = d.method || pcoaMethod.value
+
+  // Build axis labels based on method
+  const axisLabel = (dim) => {
+    if (method === 'pcoa' && ve) return `PCo${dim} (${ve[dim - 1]}%)`
+    if (method === 'tsne') return `t-SNE ${dim}`
+    if (method === 'umap') return `UMAP ${dim}`
+    return `Dim ${dim}`
+  }
+  const hoverPrefix = method === 'pcoa' ? 'PCo' : method === 'tsne' ? 't-SNE ' : method === 'umap' ? 'UMAP ' : 'Dim '
 
   const palette = [c.class0, c.class1, c.accent, c.danger]
   const classColorMap = {}
@@ -1070,16 +1111,16 @@ async function renderPcoaChart() {
         type: 'scatter3d',
         name: `Class ${cls}`,
         marker: { color: classColorMap[cls], size: 4, opacity: 0.85 },
-        hovertemplate: '%{text}<br>PCo1: %{x:.3f}<br>PCo2: %{y:.3f}<br>PCo3: %{z:.3f}<extra></extra>',
+        hovertemplate: `%{text}<br>${hoverPrefix}1: %{x:.3f}<br>${hoverPrefix}2: %{y:.3f}<br>${hoverPrefix}3: %{z:.3f}<extra></extra>`,
       }
     })
 
     Plotly.newPlot(pcoaChartEl.value, traces, {
       ...chartLayout({ height: 550 }),
       scene: {
-        xaxis: { title: { text: `PCo1 (${ve[0]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
-        yaxis: { title: { text: `PCo2 (${ve[1]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
-        zaxis: { title: { text: `PCo3 (${ve[2]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        xaxis: { title: { text: axisLabel(1), font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        yaxis: { title: { text: axisLabel(2), font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        zaxis: { title: { text: axisLabel(3), font: { color: c.text } }, gridcolor: c.grid, color: c.text },
         bgcolor: c.paper,
       },
       legend: { orientation: 'h', y: -0.05, font: { color: c.text } },
@@ -1095,7 +1136,7 @@ async function renderPcoaChart() {
         type: 'scatter',
         name: `Class ${cls}`,
         marker: { color: classColorMap[cls], size: 7, opacity: 0.8, line: { color: classColorMap[cls], width: 0.5 } },
-        hovertemplate: '%{text}<br>PCo1: %{x:.3f}<br>PCo2: %{y:.3f}<extra></extra>',
+        hovertemplate: `%{text}<br>${hoverPrefix}1: %{x:.3f}<br>${hoverPrefix}2: %{y:.3f}<extra></extra>`,
       }
     })
 
@@ -1120,8 +1161,8 @@ async function renderPcoaChart() {
     }
 
     Plotly.newPlot(pcoaChartEl.value, traces, chartLayout({
-      xaxis: { title: { text: `PCo1 (${ve[0]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
-      yaxis: { title: { text: `PCo2 (${ve[1]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
+      xaxis: { title: { text: axisLabel(1), font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
+      yaxis: { title: { text: axisLabel(2), font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
       legend: { orientation: 'h', y: 1.12, font: { color: c.text } },
       height: 500,
     }), { responsive: true, displayModeBar: false })

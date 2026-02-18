@@ -20,7 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from ..core.database import get_db, sync_session_factory
 from ..core.deps import get_current_user, get_project_with_access
-from ..models.db_models import User, Job, DatasetFile, Webhook
+from ..models.db_models import User, Job, Dataset, DatasetFile, ProjectDataset, Webhook
 from ..models.schemas import (
     RunConfig,
     BatchSweepConfig,
@@ -673,6 +673,130 @@ async def find_duplicate_jobs(
     return duplicates
 
 
+@router.get("/{project_id}/jobs/{job_id}/config")
+async def get_job_config(
+    project_id: str,
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the full configuration of a job (viewer access).
+
+    Returns the RunConfig dict stored when the job was created,
+    so the frontend can pre-fill the Parameters tab for a duplicate run.
+    """
+    job = await _verify_job_access(project_id, job_id, user, db)
+    return {
+        "job_id": job_id,
+        "name": job.name,
+        "config": job.config or {},
+    }
+
+
+@router.post("/{project_id}/jobs/{job_id}/rerun", response_model=ExperimentSummary)
+async def rerun_job(
+    project_id: str,
+    job_id: str,
+    job_name: str = "",
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    background_tasks: BackgroundTasks = None,
+):
+    """Re-run a job with the same configuration (editor access required).
+
+    Creates a new job using the original job's config and the project's
+    current dataset files.  Useful for reproducibility testing.
+    """
+    await get_project_with_access(project_id, user, db, require_role="editor")
+
+    # Load original job
+    result = await db.execute(
+        select(Job).where(Job.id == job_id, Job.project_id == project_id)
+    )
+    original = result.scalar_one_or_none()
+    if not original:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not original.config:
+        raise HTTPException(status_code=400, detail="Job has no stored configuration")
+
+    # Resolve current dataset files from the project
+    result = await db.execute(
+        select(DatasetFile)
+        .join(DatasetFile.dataset)
+        .join(Dataset.project_links)
+        .where(ProjectDataset.project_id == project_id)
+    )
+    files = result.scalars().all()
+
+    file_map = {}
+    for f in files:
+        if f.role:
+            file_map[f.role] = f
+
+    xtrain = file_map.get("xtrain")
+    ytrain = file_map.get("ytrain")
+    if not xtrain or not ytrain:
+        raise HTTPException(status_code=400, detail="Project has no training data files")
+
+    x_path = xtrain.disk_path
+    y_path = ytrain.disk_path
+    xtest_path = file_map["xtest"].disk_path if "xtest" in file_map else ""
+    ytest_path = file_map["ytest"].disk_path if "ytest" in file_map else ""
+
+    config_dict = original.config
+    xtest_file = file_map.get("xtest")
+    ytest_file = file_map.get("ytest")
+    config_hash = _compute_config_hash(config_dict, {
+        "x": xtrain.id, "y": ytrain.id,
+        "xtest": xtest_file.id if xtest_file else "",
+        "ytest": ytest_file.id if ytest_file else "",
+    })
+
+    # Generate rerun name
+    rerun_name = job_name or f"[Rerun] {original.name or original.id[:8]}"
+
+    job = Job(
+        project_id=project_id, user_id=user.id, name=rerun_name,
+        status="pending", config=config_dict, config_hash=config_hash,
+    )
+    db.add(job)
+    await db.commit()
+
+    job_dir = Path(storage.settings.project_dir) / project_id / "jobs" / job.id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    param_path = engine.write_param_yaml(
+        config=config_dict,
+        x_path=str(x_path),
+        y_path=str(y_path),
+        xtest_path=xtest_path,
+        ytest_path=ytest_path,
+        output_dir=str(job_dir),
+    )
+
+    await audit.log_action(db, user, audit.ACTION_JOB_LAUNCH, "job", job.id,
+                           details={"project_id": project_id, "rerun_of": job_id})
+    await db.commit()
+
+    if scitq_client.is_enabled():
+        try:
+            scitq_task_id = scitq_client.dispatch_job(
+                job.id, project_id, param_path, str(job_dir),
+            )
+            job.scitq_task_id = scitq_task_id
+            await db.commit()
+            background_tasks.add_task(
+                _poll_scitq_job, job.id, project_id, scitq_task_id, user.id,
+            )
+        except Exception as e:
+            logger.error("scitq dispatch failed, falling back to local: %s", e)
+            background_tasks.add_task(_run_job, job.id, project_id, param_path, user.id)
+    else:
+        background_tasks.add_task(_run_job, job.id, project_id, param_path, user.id)
+
+    return ExperimentSummary(job_id=job.id, name=job.name, status=JobStatus.pending)
+
+
 @router.get("/{project_id}/jobs/{job_id}/logs")
 async def get_job_logs(
     project_id: str,
@@ -795,17 +919,22 @@ async def get_stability_analysis(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Compute model stability analysis for a job's FBM population.
+    """Return model stability analysis for a job's FBM population.
 
-    Returns stability indices (Kuncheva, Tanimoto, CW_rel) per sparsity level,
-    hierarchical clustering dendrogram, and feature × sparsity heatmap.
+    Serves pre-computed data from results when available (fast path).
+    Falls back to on-demand computation for legacy results.
     """
-    from ..services import stability
-
     await _verify_job_access(project_id, job_id, user, db)
     results = storage.get_job_result(project_id, job_id)
     if not results:
         raise HTTPException(status_code=404, detail="Results not found")
+
+    # Fast path: serve pre-computed stability data
+    if "stability" in results:
+        return results["stability"]
+
+    # Fallback: compute on-demand for legacy results without pre-computed data
+    from ..services import stability
 
     population = results.get("population", [])
     feature_names = results.get("feature_names", [])

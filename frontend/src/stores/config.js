@@ -53,5 +53,16 @@ export const useConfigStore = defineStore('config', () => {
     if (fresh[catId]) Object.assign(form[catId], fresh[catId])
   }
 
-  return { form, filterParams, resetToDefaults, resetCategory }
+  /** Load configuration from an existing job's stored config.
+   *  Used for the "Duplicate & modify" workflow — pre-fills the Parameters form. */
+  function loadFromJobConfig(config) {
+    if (!config || typeof config !== 'object') return
+    for (const [section, params] of Object.entries(config)) {
+      if (form[section] && typeof params === 'object') {
+        Object.assign(form[section], params)
+      }
+    }
+  }
+
+  return { form, filterParams, resetToDefaults, resetCategory, loadFromJobConfig }
 })

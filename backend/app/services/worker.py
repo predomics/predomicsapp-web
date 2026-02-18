@@ -94,11 +94,10 @@ def _predict_from_votes(votes, weights=None):
     return predicted
 
 
-def _evaluate_test_per_generation(experiment, param_path):
-    """Evaluate each generation's best model on test data.
+def _prepare_test_context(experiment, param_path):
+    """Load test data once for reuse across generations.
 
-    Returns a dict mapping generation index to test AUC, or empty dict if
-    no test data is available.
+    Returns a context dict with pre-loaded arrays, or None if no test data.
     """
     with open(param_path) as f:
         param_cfg = yaml.safe_load(f)
@@ -108,69 +107,70 @@ def _evaluate_test_per_generation(experiment, param_path):
     ytest_path = data_cfg.get("ytest", "")
 
     if not xtest_path or not ytest_path:
-        return {}
+        return None
 
     try:
         features_in_rows = data_cfg.get("features_in_rows", True)
 
-        # Load test data
         x_test = pd.read_csv(xtest_path, sep="\t", index_col=0)
         y_test = pd.read_csv(ytest_path, sep="\t", index_col=0)
 
-        # Transpose so rows = samples, columns = features
         if features_in_rows:
             x_test = x_test.T
 
         y_labels = y_test.iloc[:, 0]
-
-        # Align samples present in both X and y
         common = x_test.index.intersection(y_labels.index)
         if len(common) == 0:
             print("[worker] Warning: no common samples between X_test and y_test")
-            return {}
+            return None
 
         x_test = x_test.loc[common]
         y_arr = y_labels.loc[common].values.astype(float)
         x_raw = x_test.values.astype(float)
 
-        # Pre-compute prevalence-normalised version (row sums = sample totals)
         row_sums = x_raw.sum(axis=1, keepdims=True)
         row_sums[row_sums == 0] = 1.0
         x_prev = x_raw / row_sums
 
-        # Map feature name -> column index in x_test
         feature_names = experiment.feature_names()
         test_col_idx = {name: i for i, name in enumerate(x_test.columns)}
 
-        n_gens = experiment.generation_count()
-        test_aucs = {}
-
-        for g in range(n_gens):
-            gen_pop = experiment.get_population(g, 0)
-            gen_best = gen_pop.best()
-            gen_metrics = dict(gen_best.get_metrics())
-            features = gen_best.get_features()  # {feature_idx: coef}
-            data_type = gen_metrics.get("data_type", "raw")
-
-            x_eval = x_prev if data_type == "prevalence" else x_raw
-
-            scores = np.zeros(len(x_eval))
-            for feat_idx, coef in features.items():
-                idx = int(feat_idx)
-                if idx >= len(feature_names):
-                    continue
-                feat_name = feature_names[idx]
-                if feat_name in test_col_idx:
-                    scores += x_eval[:, test_col_idx[feat_name]] * float(coef)
-
-            test_aucs[g] = round(_compute_auc(y_arr, scores), 6)
-
-        print(f"[worker] Test AUC evaluated on {len(common)} samples across {n_gens} generations")
-        return test_aucs
-
+        print(f"[worker] Test data loaded: {len(common)} samples, {len(x_test.columns)} features")
+        return {
+            "y_arr": y_arr,
+            "x_raw": x_raw,
+            "x_prev": x_prev,
+            "feature_names": feature_names,
+            "test_col_idx": test_col_idx,
+        }
     except Exception as e:
-        print(f"[worker] Warning: test evaluation failed: {e}")
-        return {}
+        print(f"[worker] Warning: test data loading failed: {e}")
+        return None
+
+
+def _evaluate_one_generation(gen_best, ctx):
+    """Evaluate a single generation's best model on pre-loaded test data."""
+    try:
+        gen_metrics = dict(gen_best.get_metrics())
+        features = gen_best.get_features()
+        data_type = gen_metrics.get("data_type", "raw")
+
+        x_eval = ctx["x_prev"] if data_type == "prevalence" else ctx["x_raw"]
+        feature_names = ctx["feature_names"]
+        test_col_idx = ctx["test_col_idx"]
+
+        scores = np.zeros(len(x_eval))
+        for feat_idx, coef in features.items():
+            idx = int(feat_idx)
+            if idx >= len(feature_names):
+                continue
+            feat_name = feature_names[idx]
+            if feat_name in test_col_idx:
+                scores += x_eval[:, test_col_idx[feat_name]] * float(coef)
+
+        return round(_compute_auc(ctx["y_arr"], scores), 6)
+    except Exception:
+        return None
 
 
 def _strip_ansi(text):
@@ -327,6 +327,7 @@ def _parse_importance_from_display(display_text):
 
 
 def main():
+    import time as _time
     param_path = sys.argv[1]
     results_path = sys.argv[2]
 
@@ -335,15 +336,22 @@ def main():
     # Initialize Rust logger so gpredomics progress output goes to stderr
     gpredomicspy.init_logger("info")
 
+    t_wall_start = _time.monotonic()
+    timing = []  # list of {label, duration_s} dicts for flamegraph
+
     param = gpredomicspy.Param()
     param.load(param_path)
 
     print("[worker] Starting gpredomics fit...", flush=True)
     print("[worker] Note: if importance computation is enabled, it may take several minutes for large populations.", flush=True)
+    t_fit = _time.monotonic()
     experiment = gpredomicspy.fit(param)
-    print("[worker] Fit complete.", flush=True)
+    fit_dur = _time.monotonic() - t_fit
+    print(f"[worker] Fit complete. ({fit_dur:.1f}s)", flush=True)
+    timing.append({"label": "GA fit", "duration_s": round(fit_dur, 2)})
 
     # Extract results
+    t_extract = _time.monotonic()
     best_pop = experiment.best_population()
     best = best_pop.best()
     metrics = dict(best.get_metrics())
@@ -366,14 +374,17 @@ def main():
             "features": {str(k): int(v) for k, v in ind_features.items()},
             "named_features": named_features,
         })
+    extract_dur = _time.monotonic() - t_extract
+    print(f"[worker] Population extracted: {len(population_data)} models. ({extract_dur:.1f}s)", flush=True)
+    timing.append({"label": "Population extraction", "duration_s": round(extract_dur, 2)})
 
-    # Build per-generation tracking for convergence chart
+    # Build per-generation tracking + test evaluation in a SINGLE loop
+    t_gen = _time.monotonic()
     generation_tracking = []
     n_gens = experiment.generation_count()
 
-    # Evaluate each generation's best model on test data (if available)
-    print("[worker] Evaluating models on test data...")
-    test_aucs = _evaluate_test_per_generation(experiment, param_path)
+    # Pre-load test data once (if available) for test AUC evaluation
+    test_ctx = _prepare_test_context(experiment, param_path)
 
     for g in range(n_gens):
         gen_pop = experiment.get_population(g, 0)
@@ -386,9 +397,30 @@ def main():
             "best_k": gen_metrics["k"],
             "population_size": len(gen_pop),
         }
-        if g in test_aucs:
-            entry["best_auc_test"] = test_aucs[g]
+        # Evaluate on test data if context is available
+        if test_ctx is not None:
+            test_auc = _evaluate_one_generation(gen_best, test_ctx)
+            if test_auc is not None:
+                entry["best_auc_test"] = test_auc
         generation_tracking.append(entry)
+
+    gen_dur = _time.monotonic() - t_gen
+    print(f"[worker] Generation tracking: {n_gens} generations. ({gen_dur:.1f}s)", flush=True)
+    timing.append({"label": "Generation tracking", "duration_s": round(gen_dur, 2)})
+
+    # Pre-compute stability analysis and store in results
+    t_stab = _time.monotonic()
+    try:
+        from . import stability
+        stability_data = stability.compute_stability_analysis(population_data, feature_names)
+        stab_dur = _time.monotonic() - t_stab
+        print(f"[worker] Stability pre-computed: {stability_data['stats']['n_models']} models. ({stab_dur:.1f}s)", flush=True)
+        timing.append({"label": "Stability analysis", "duration_s": round(stab_dur, 2)})
+    except Exception as e:
+        stab_dur = _time.monotonic() - t_stab
+        stability_data = None
+        print(f"[worker] Stability computation skipped: {e} ({stab_dur:.1f}s)", flush=True)
+        timing.append({"label": "Stability (skipped)", "duration_s": round(stab_dur, 2)})
 
     results = {
         "fold_count": experiment.fold_count(),
@@ -413,6 +445,8 @@ def main():
         "population": population_data,
         "generation_tracking": generation_tracking,
     }
+    if stability_data is not None:
+        results["stability"] = stability_data
 
     # Save results first — display_results() may panic in Rust and kill the process
     with open(results_path, "w") as f:
@@ -421,6 +455,7 @@ def main():
     print(f"\n[worker] Results saved to {results_path}")
 
     # Extract jury data directly from gpredomics objects (preferred)
+    t_jury = _time.monotonic()
     enriched = False
     try:
         if experiment.has_jury():
@@ -489,11 +524,17 @@ def main():
             print(f"[worker] Extracted jury data: {jury_data['method']} with {jury_data['expert_count']} experts")
     except Exception as e:
         print(f"[worker] Warning: direct jury extraction failed: {e}")
+    jury_dur = _time.monotonic() - t_jury
+    timing.append({"label": "Jury extraction", "duration_s": round(jury_dur, 2)})
 
     # Print full experiment results (population, importance, voting/jury)
     # PanicException inherits from BaseException, not Exception
     try:
+        t_display = _time.monotonic()
         display_output = experiment.display_results()
+        display_dur = _time.monotonic() - t_display
+        print(f"[worker] display_results() completed. ({display_dur:.1f}s)", flush=True)
+        timing.append({"label": "display_results()", "duration_s": round(display_dur, 2)})
         print(display_output)
 
         # If jury wasn't extracted via objects, fall back to text parsing
@@ -536,6 +577,16 @@ def main():
             with open(results_path, "w") as f:
                 json.dump(results, f, indent=2, default=str)
             print("[worker] Results saved with jury data (display failed)")
+
+    # Store timing breakdown in results for flamegraph
+    wall_total = round(_time.monotonic() - t_wall_start, 2)
+    results["timing"] = {
+        "phases": timing,
+        "wall_total_s": wall_total,
+    }
+    with open(results_path, "w") as f:
+        json.dump(results, f, indent=2, default=str)
+    print(f"[worker] Timing data saved. Total wall time: {wall_total:.1f}s", flush=True)
 
 
 if __name__ == "__main__":

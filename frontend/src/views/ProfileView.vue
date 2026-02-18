@@ -46,6 +46,15 @@
         </div>
         <button class="btn btn-small" @click="resetTour">{{ $t('profile.resetTour') }}</button>
       </div>
+      <div class="pref-row">
+        <div>
+          <span class="pref-label">{{ $t('profile.debugMode') }}</span>
+          <span class="pref-desc">{{ $t('profile.debugModeDesc') }}</span>
+        </div>
+        <button class="btn btn-small" @click="debug.toggle()">
+          {{ debug.debugMode.value ? $t('profile.enabled') : $t('profile.disabled') }}
+        </button>
+      </div>
       <span v-if="prefMsg" class="msg success">{{ prefMsg }}</span>
     </section>
 
@@ -139,9 +148,11 @@ import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { useAuthStore } from '../stores/auth'
 import { isSupported, requestPermission } from '../utils/notify'
+import { useDebugMode } from '../composables/useDebugMode'
 import { useI18n } from 'vue-i18n'
 
 const auth = useAuthStore()
+const debug = useDebugMode()
 const { t } = useI18n()
 
 const fullName = ref('')

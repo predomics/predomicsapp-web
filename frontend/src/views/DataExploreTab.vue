@@ -6,6 +6,7 @@
       <button :class="{ active: subTab === 'features' }" @click="subTab = 'features'">{{ $t('dataExplore.features') }}</button>
       <button :class="{ active: subTab === 'visualizations' }" @click="subTab = 'visualizations'">{{ $t('dataExplore.visualizations') }}</button>
       <button :class="{ active: subTab === 'pcoa' }" @click="subTab = 'pcoa'">{{ $t('dataExplore.pcoa') }}</button>
+      <button :class="{ active: subTab === 'aberrant' }" @click="subTab = 'aberrant'">{{ $t('dataExplore.aberrantCorrelations') }}</button>
     </nav>
 
     <!-- ====== SUMMARY SUB-TAB ====== -->
@@ -167,6 +168,14 @@
     <div v-if="subTab === 'pcoa'" class="sub-content">
       <div class="pcoa-controls">
         <label class="filter-item">
+          <span>{{ $t('dataExplore.ordinationMethod') }}</span>
+          <select v-model="pcoaMethod" @change="loadPcoa">
+            <option value="pcoa">PCoA</option>
+            <option value="tsne">t-SNE</option>
+            <option value="umap">UMAP</option>
+          </select>
+        </label>
+        <label class="filter-item">
           <span>{{ $t('dataExplore.pcoaMetric') }}</span>
           <select v-model="pcoaMetric" @change="loadPcoa">
             <option value="braycurtis">Bray-Curtis</option>
@@ -174,6 +183,18 @@
             <option value="jaccard">Jaccard</option>
             <option value="cosine">{{ $t('dataExplore.cosine') }}</option>
           </select>
+        </label>
+        <label v-if="pcoaMethod === 'tsne'" class="filter-item">
+          <span>{{ $t('dataExplore.perplexity') }}</span>
+          <input type="number" v-model.number="tsnePerplexity" min="5" max="100" step="5" @change="loadPcoa" class="param-input" />
+        </label>
+        <label v-if="pcoaMethod === 'umap'" class="filter-item">
+          <span>{{ $t('dataExplore.nNeighbors') }}</span>
+          <input type="number" v-model.number="umapNeighbors" min="2" max="100" step="1" @change="loadPcoa" class="param-input" />
+        </label>
+        <label v-if="pcoaMethod === 'umap'" class="filter-item">
+          <span>{{ $t('dataExplore.minDist') }}</span>
+          <input type="number" v-model.number="umapMinDist" min="0" max="1" step="0.05" @change="loadPcoa" class="param-input" />
         </label>
         <label class="filter-item pcoa-dim-toggle">
           <span>{{ $t('dataExplore.pcoaDimensions') }}</span>
@@ -197,6 +218,36 @@
       <div v-if="!pcoaData && !loadingPcoa && !loading" class="empty">
         {{ $t('dataExplore.noTrainingData') }}
       </div>
+    </div>
+
+    <!-- ====== ABERRANT CORRELATIONS SUB-TAB ====== -->
+    <div v-if="subTab === 'aberrant'" class="sub-content">
+      <section class="section">
+        <h3>{{ $t('dataExplore.aberrantCorrelations') }}</h3>
+        <p class="aberrant-desc">{{ $t('dataExplore.aberrantDesc') }}</p>
+        <div class="aberrant-controls">
+          <label class="filter-item">
+            <span>{{ $t('dataExplore.minPrevalence') }}</span>
+            <input type="number" v-model.number="aberrantPrevalence" min="0" max="100" step="5" class="param-input" />
+          </label>
+          <button class="aberrant-compute-btn" @click="loadAberrantCorrelations" :disabled="loadingAberrant">
+            {{ loadingAberrant ? $t('common.loading') : $t('dataExplore.loadAberrant') }}
+          </button>
+        </div>
+      </section>
+
+      <section class="section" v-if="aberrantData && aberrantData.pairs.length > 0">
+        <p class="aberrant-info">
+          {{ aberrantData.n_features }} {{ $t('dataExplore.features').toLowerCase() }}
+          &middot; {{ aberrantData.n_pairs }} {{ $t('dataExplore.featuresSelected').split(' ')[0] === 'features' ? 'pairs' : 'paires' }}
+        </p>
+        <div ref="aberrantChartEl" class="plotly-chart plotly-chart-tall"></div>
+      </section>
+
+      <div v-if="aberrantData && aberrantData.pairs.length === 0 && !loadingAberrant" class="empty">
+        {{ $t('common.noData') }}
+      </div>
+      <div v-if="loadingAberrant" class="loading">{{ $t('common.loading') }}</div>
     </div>
 
     <!-- Global loading -->
@@ -228,8 +279,15 @@ const distributions = ref(null)
 const abundanceData = ref([])
 const pcoaData = ref(null)
 const loadingPcoa = ref(false)
+const pcoaMethod = ref('pcoa')
 const pcoaMetric = ref('braycurtis')
 const pcoaDim = ref('2d')
+const tsnePerplexity = ref(30)
+const umapNeighbors = ref(15)
+const umapMinDist = ref(0.1)
+const aberrantData = ref(null)
+const loadingAberrant = ref(false)
+const aberrantPrevalence = ref(30)
 
 // Filter controls
 const filterMethod = ref('wilcoxon')
@@ -251,6 +309,7 @@ const sdHistChartEl = ref(null)
 const volcanoChartEl = ref(null)
 const abundanceChartEl = ref(null)
 const pcoaChartEl = ref(null)
+const aberrantChartEl = ref(null)
 
 const projectId = computed(() => route.params.id)
 
@@ -394,13 +453,19 @@ async function loadAll() {
   }
 }
 
-// --- PCoA ---
+// --- PCoA / t-SNE / UMAP ---
 async function loadPcoa() {
   loadingPcoa.value = true
   try {
-    const { data } = await axios.get(`/api/data-explore/${projectId.value}/pcoa`, {
-      params: { metric: pcoaMetric.value },
-    })
+    const params = { method: pcoaMethod.value, metric: pcoaMetric.value }
+    if (pcoaMethod.value === 'tsne') {
+      params.perplexity = tsnePerplexity.value
+    } else if (pcoaMethod.value === 'umap') {
+      params.n_neighbors = umapNeighbors.value
+      params.min_dist = umapMinDist.value
+    }
+    if (pcoaDim.value === '3d') params.n_components = 3
+    const { data } = await axios.get(`/api/data-explore/${projectId.value}/ordination`, { params })
     pcoaData.value = data
     await nextTick()
     renderPcoaChart()
@@ -408,11 +473,88 @@ async function loadPcoa() {
     if (e.response?.status === 404) {
       pcoaData.value = null
     } else {
-      console.error('Failed to load PCoA:', e)
+      console.error('Failed to load ordination:', e)
     }
   } finally {
     loadingPcoa.value = false
   }
+}
+
+// --- Aberrant correlations ---
+async function loadAberrantCorrelations() {
+  loadingAberrant.value = true
+  try {
+    const { data } = await axios.get(`/api/data-explore/${projectId.value}/aberrant-correlations`, {
+      params: { min_prevalence_pct: aberrantPrevalence.value },
+    })
+    aberrantData.value = data
+    await nextTick()
+    renderAberrantChart()
+  } catch (e) {
+    console.error('Failed to load aberrant correlations:', e)
+  } finally {
+    loadingAberrant.value = false
+  }
+}
+
+async function renderAberrantChart() {
+  await nextTick()
+  if (!aberrantChartEl.value || !aberrantData.value || aberrantData.value.pairs.length === 0) return
+  const c = chartColors()
+  const pairs = aberrantData.value.pairs
+
+  // Compute deviation from diagonal for coloring
+  const r0 = pairs.map(p => p.r0)
+  const r1 = pairs.map(p => p.r1)
+  const deviations = pairs.map(p => Math.abs(p.r0 - p.r1))
+  const hoverText = pairs.map(p => `${p.f1} — ${p.f2}<br>Class 0: ${p.r0}<br>Class 1: ${p.r1}<br>|dev|: ${Math.abs(p.r0 - p.r1).toFixed(4)}`)
+
+  const traces = [
+    // Scatter points colored by deviation
+    {
+      x: r0,
+      y: r1,
+      text: hoverText,
+      mode: 'markers',
+      type: 'scatter',
+      name: 'Feature pairs',
+      marker: {
+        color: deviations,
+        colorscale: [[0, c.class0], [0.5, c.accent], [1, c.danger]],
+        size: 4,
+        opacity: 0.6,
+        colorbar: { title: '|dev|', len: 0.5, thickness: 12, tickfont: { color: c.text } },
+      },
+      hovertemplate: '%{text}<extra></extra>',
+    },
+    // Diagonal line y=x
+    {
+      x: [-1, 1],
+      y: [-1, 1],
+      mode: 'lines',
+      type: 'scatter',
+      name: 'y = x',
+      line: { color: c.dimmed, width: 1.5, dash: 'dash' },
+      showlegend: true,
+      hoverinfo: 'skip',
+    },
+  ]
+
+  Plotly.newPlot(aberrantChartEl.value, traces, chartLayout({
+    xaxis: {
+      title: { text: t('dataExplore.class0Corr'), font: { color: c.text } },
+      gridcolor: c.grid, color: c.text, range: [-1.05, 1.05],
+      zeroline: true, zerolinecolor: c.grid,
+    },
+    yaxis: {
+      title: { text: t('dataExplore.class1Corr'), font: { color: c.text } },
+      gridcolor: c.grid, color: c.text, range: [-1.05, 1.05],
+      zeroline: true, zerolinecolor: c.grid,
+      scaleanchor: 'x', scaleratio: 1,
+    },
+    legend: { orientation: 'h', y: 1.12, font: { color: c.text } },
+    height: 500,
+  }), { responsive: true, displayModeBar: false })
 }
 
 // --- Chart renderers ---
@@ -603,13 +745,21 @@ async function renderPcoaChart() {
   const c = chartColors()
   const d = pcoaData.value
   const ve = d.variance_explained
+  const method = d.method || pcoaMethod.value
+
+  const axisLabel = (dim) => {
+    if (method === 'pcoa' && ve) return `PCo${dim} (${ve[dim - 1]}%)`
+    if (method === 'tsne') return `t-SNE ${dim}`
+    if (method === 'umap') return `UMAP ${dim}`
+    return `Dim ${dim}`
+  }
+  const hoverPrefix = method === 'pcoa' ? 'PCo' : method === 'tsne' ? 't-SNE ' : method === 'umap' ? 'UMAP ' : 'Dim '
 
   const classColorMap = {}
   const palette = [c.class0, c.class1, c.accent, c.danger]
   d.class_labels.forEach((lbl, i) => { classColorMap[lbl] = palette[i % palette.length] })
 
   if (pcoaDim.value === '3d') {
-    // 3D scatter plot
     const traces = d.class_labels.map(cls => {
       const mask = d.sample_classes.map((sc, i) => String(sc) === cls ? i : -1).filter(i => i >= 0)
       return {
@@ -621,22 +771,21 @@ async function renderPcoaChart() {
         type: 'scatter3d',
         name: `${t('dataExplore.class')} ${cls}`,
         marker: { color: classColorMap[cls], size: 4, opacity: 0.85 },
-        hovertemplate: '%{text}<br>PCo1: %{x:.3f}<br>PCo2: %{y:.3f}<br>PCo3: %{z:.3f}<extra></extra>',
+        hovertemplate: `%{text}<br>${hoverPrefix}1: %{x:.3f}<br>${hoverPrefix}2: %{y:.3f}<br>${hoverPrefix}3: %{z:.3f}<extra></extra>`,
       }
     })
 
     Plotly.newPlot(pcoaChartEl.value, traces, {
       ...chartLayout({ height: 550 }),
       scene: {
-        xaxis: { title: { text: `PCo1 (${ve[0]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
-        yaxis: { title: { text: `PCo2 (${ve[1]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
-        zaxis: { title: { text: `PCo3 (${ve[2]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        xaxis: { title: { text: axisLabel(1), font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        yaxis: { title: { text: axisLabel(2), font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        zaxis: { title: { text: axisLabel(3), font: { color: c.text } }, gridcolor: c.grid, color: c.text },
         bgcolor: c.paper,
       },
       legend: { orientation: 'h', y: -0.05, font: { color: c.text } },
     }, { responsive: true, displayModeBar: true })
   } else {
-    // 2D scatter plot
     const traces = d.class_labels.map(cls => {
       const mask = d.sample_classes.map((sc, i) => String(sc) === cls ? i : -1).filter(i => i >= 0)
       return {
@@ -647,13 +796,13 @@ async function renderPcoaChart() {
         type: 'scatter',
         name: `${t('dataExplore.class')} ${cls}`,
         marker: { color: classColorMap[cls], size: 7, opacity: 0.8, line: { color: classColorMap[cls], width: 0.5 } },
-        hovertemplate: '%{text}<br>PCo1: %{x:.3f}<br>PCo2: %{y:.3f}<extra></extra>',
+        hovertemplate: `%{text}<br>${hoverPrefix}1: %{x:.3f}<br>${hoverPrefix}2: %{y:.3f}<extra></extra>`,
       }
     })
 
     Plotly.newPlot(pcoaChartEl.value, traces, chartLayout({
-      xaxis: { title: { text: `PCo1 (${ve[0]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
-      yaxis: { title: { text: `PCo2 (${ve[1]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
+      xaxis: { title: { text: axisLabel(1), font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
+      yaxis: { title: { text: axisLabel(2), font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
       legend: { orientation: 'h', y: 1.12, font: { color: c.text } },
       height: 500,
     }), { responsive: true, displayModeBar: false })
@@ -699,6 +848,15 @@ watch([subTab, () => themeStore.isDark], () => {
 // Re-render when switching 2D/3D
 watch(pcoaDim, () => {
   if (pcoaData.value) renderPcoaChart()
+})
+
+// Load aberrant correlations when tab activated (lazy load) + re-render on theme change
+watch([subTab, () => themeStore.isDark], () => {
+  if (subTab.value === 'aberrant') {
+    if (aberrantData.value) {
+      renderAberrantChart()
+    }
+  }
 })
 
 onMounted(loadAll)
@@ -1007,5 +1165,49 @@ onMounted(loadAll)
 
 .plotly-chart-pcoa {
   min-height: 500px;
+}
+
+/* Aberrant correlations */
+.aberrant-desc {
+  font-size: 0.85rem;
+  color: var(--text-faint);
+  margin-bottom: 1rem;
+}
+
+.aberrant-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-end;
+}
+
+.aberrant-compute-btn {
+  padding: 0.4rem 1rem;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.aberrant-compute-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.aberrant-compute-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.aberrant-info {
+  font-size: 0.82rem;
+  color: var(--text-faint);
+  margin-bottom: 0.75rem;
+}
+
+.param-input {
+  min-width: 80px;
 }
 </style>

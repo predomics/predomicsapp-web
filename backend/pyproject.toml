@@ -23,6 +23,8 @@ dependencies = [
     "slowapi>=0.1.9",
     "reportlab>=4.0",
     "networkx>=3.0",
+    "scikit-learn>=1.0",
+    "umap-learn>=0.5",
 ]
 
 [project.optional-dependencies]

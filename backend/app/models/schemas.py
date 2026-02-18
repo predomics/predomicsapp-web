@@ -128,6 +128,8 @@ class VotingParams(BaseModel):
     vote: bool = False
     fbm_ci_alpha: float = 0.05
     prune_before_voting: bool = False
+    min_experts: int = 0
+    max_experts: int = 0
     # Advanced
     min_perf: Optional[float] = None
     min_diversity: Optional[int] = None

@@ -73,6 +73,9 @@
               <td class="col-created">{{ formatDate(j.created_at) }}</td>
               <td class="col-user">{{ j.user_name || '—' }}</td>
               <td class="col-actions">
+                <button class="btn-icon" @click.stop="selectJob(j.job_id); subTab = 'console'; loadConsoleLog()" :title="$t('results.viewLog')"><SvgIcon name="eye" :size="14" /></button>
+                <button class="btn-icon" @click.stop="rerunJob(j)" :title="$t('results.rerun')" :disabled="rerunLoading || j.status === 'running'"><SvgIcon name="refresh" :size="14" /></button>
+                <button class="btn-icon" @click.stop="duplicateJob(j)" :title="$t('results.duplicate')"><SvgIcon name="copy" :size="14" /></button>
                 <button class="btn-icon btn-delete" @click.stop="confirmDeleteJob(j)" title="Delete job" :disabled="j.status === 'running'"><SvgIcon name="trash" :size="14" /></button>
               </td>
             </tr>
@@ -138,6 +141,8 @@
       <button v-if="population.length > 1" :class="{ active: subTab === 'copresence' }" @click="subTab = 'copresence'">{{ $t('results.copresence') }}</button>
       <button :class="{ active: subTab === 'ecosystem' }" @click="subTab = 'ecosystem'">{{ $t('results.ecosystem') }}</button>
       <button v-if="population.length > 1" :class="{ active: subTab === 'stability' }" @click="subTab = 'stability'">{{ $t('results.stability') }}</button>
+      <button :class="{ active: subTab === 'basket' }" @click="subTab = 'basket'">{{ $t('results.basket') }}<span v-if="basketCount > 0" class="basket-badge">{{ basketCount }}</span></button>
+      <button :class="{ active: subTab === 'console' }" @click="subTab = 'console'; loadConsoleLog()">{{ $t('results.console') }}</button>
       <div class="export-dropdown-wrap" v-if="detail">
         <button class="btn-sm btn-export" @click="exportMenuOpen = !exportMenuOpen">
           &#8615; {{ $t('results.export') }}
@@ -360,6 +365,10 @@
             {{ $t('results.fbmOnly') }}
             <span class="fbm-badge" v-if="fbmEnabled">{{ fbmCount }} / {{ population.length }}</span>
           </label>
+          <select v-if="fbmEnabled" v-model="fbmMethod" class="fbm-method-select">
+            <option value="standard">{{ $t('results.fbmStandard') }}</option>
+            <option value="blaise">{{ $t('results.fbmBlaise') }}</option>
+          </select>
         </div>
 
         <!-- Language filter -->
@@ -418,6 +427,14 @@
         <h3>{{ $t('results.pcoaFbm') }}</h3>
         <div class="pcoa-controls">
           <label class="pcoa-control-item">
+            <span>{{ $t('data.ordinationMethod') }}</span>
+            <select v-model="popPcoaMethod" @change="loadPopPcoa">
+              <option value="pcoa">PCoA</option>
+              <option value="tsne">t-SNE</option>
+              <option value="umap">UMAP</option>
+            </select>
+          </label>
+          <label class="pcoa-control-item">
             <span>{{ $t('data.pcoaMetric') }}</span>
             <select v-model="popPcoaMetric" @change="loadPopPcoa">
               <option value="braycurtis">Bray-Curtis</option>
@@ -425,6 +442,18 @@
               <option value="jaccard">Jaccard</option>
               <option value="cosine">{{ $t('data.cosine') }}</option>
             </select>
+          </label>
+          <label v-if="popPcoaMethod === 'tsne'" class="pcoa-control-item">
+            <span>{{ $t('data.perplexity') }}</span>
+            <input type="number" v-model.number="popTsnePerplexity" min="5" max="100" step="5" @change="loadPopPcoa" class="param-input" />
+          </label>
+          <label v-if="popPcoaMethod === 'umap'" class="pcoa-control-item">
+            <span>{{ $t('data.nNeighbors') }}</span>
+            <input type="number" v-model.number="popUmapNeighbors" min="2" max="100" step="1" @change="loadPopPcoa" class="param-input" />
+          </label>
+          <label v-if="popPcoaMethod === 'umap'" class="pcoa-control-item">
+            <span>{{ $t('data.minDist') }}</span>
+            <input type="number" v-model.number="popUmapMinDist" min="0" max="1" step="0.05" @change="loadPopPcoa" class="param-input" />
           </label>
           <label class="toggle-label">
             <input type="checkbox" v-model="popPcoaShowEllipses" @change="renderPopPcoaChart" />
@@ -459,6 +488,7 @@
         <table class="pop-table">
           <thead>
             <tr>
+              <th class="col-basket"></th>
               <th>{{ $t('results.rank') }}</th>
               <th>{{ $t('results.auc') }}</th>
               <th>{{ $t('results.fit') }}</th>
@@ -470,8 +500,23 @@
           </thead>
           <tbody>
             <template v-for="ind in paginatedPopulation" :key="ind.rank">
-              <tr @click="toggleExpand(ind.rank)" class="clickable-row">
-                <td>{{ ind.rank + 1 }}</td>
+              <tr @click="toggleExpand(ind.rank)" class="clickable-row" :class="{ 'module-filtered': moduleFilteredIndices && moduleFilteredIndices.has(ind.rank) }">
+                <td class="col-basket" @click.stop>
+                  <button
+                    class="btn-icon btn-basket"
+                    :class="{ 'in-basket': isInBasket(selectedJobId, ind.rank) }"
+                    :disabled="basketFull && !isInBasket(selectedJobId, ind.rank)"
+                    :title="isInBasket(selectedJobId, ind.rank) ? $t('results.basketRemove') : basketFull ? $t('results.basketFull') : $t('results.basketAdd')"
+                    @click.stop="toggleBasket(selectedJobId, selectedJobInfo?.name, ind)"
+                  >
+                    <span v-if="isInBasket(selectedJobId, ind.rank)">&#9733;</span>
+                    <span v-else>&#9734;</span>
+                  </button>
+                </td>
+                <td>
+                  {{ ind.rank + 1 }}
+                  <span v-if="moduleFilteredIndices && moduleFilteredIndices.has(ind.rank)" class="module-badge" :title="$t('results.ecoFbmFilterTitle')">M</span>
+                </td>
                 <td>{{ ind.metrics.auc?.toFixed(4) }}</td>
                 <td>{{ ind.metrics.fit?.toFixed(4) }}</td>
                 <td>{{ ind.metrics.accuracy?.toFixed(4) }}</td>
@@ -480,7 +525,7 @@
                 <td>{{ ind.metrics.data_type }}</td>
               </tr>
               <tr v-if="expandedRank === ind.rank" class="detail-row">
-                <td colspan="7">
+                <td colspan="8">
                   <div class="feature-list">
                     <div
                       v-for="[name, coef] in sortedFeatures(ind.named_features)"
@@ -741,6 +786,10 @@
             {{ $t('results.fbmOnly') }}
             <span class="fbm-badge" v-if="copresenceFBM">{{ fbmCount }} / {{ population.length }}</span>
           </label>
+          <select v-if="copresenceFBM" v-model="fbmMethod" class="fbm-method-select">
+            <option value="standard">{{ $t('results.fbmStandard') }}</option>
+            <option value="blaise">{{ $t('results.fbmBlaise') }}</option>
+          </select>
           <label class="topn-control" style="margin-left: 1rem;">
             {{ $t('results.minPrevalence') }}
             <input type="number" v-model.number="copresenceMinPrev" :min="2" :max="population.length" step="1" class="topn-input" />
@@ -754,6 +803,10 @@
               <option :value="0.05">0.05</option>
               <option :value="0.01">0.01</option>
             </select>
+          </label>
+          <label class="fbm-toggle" style="margin-left: 1rem;">
+            <input type="checkbox" v-model="copresenceWeighted" />
+            {{ $t('results.accuracyWeighted') }}
           </label>
         </div>
       </div>
@@ -840,8 +893,10 @@
               <th>{{ $t('results.colFeature1') }}</th>
               <th>{{ $t('results.colFeature2') }}</th>
               <th>{{ $t('results.colObserved') }}</th>
+              <th v-if="copresenceWeighted">{{ $t('results.weightedObs') }}</th>
               <th>{{ $t('results.colExpected') }}</th>
               <th>{{ $t('results.colRatio') }}</th>
+              <th v-if="copresenceWeighted">{{ $t('results.wRatio') }}</th>
               <th>{{ $t('results.colPValue') }}</th>
               <th>{{ $t('results.colType') }}</th>
             </tr>
@@ -851,9 +906,13 @@
               <td>{{ featureLabel(row.f1) }}</td>
               <td>{{ featureLabel(row.f2) }}</td>
               <td>{{ row.observed }}</td>
+              <td v-if="copresenceWeighted">{{ row.wObserved }}</td>
               <td>{{ row.expected.toFixed(1) }}</td>
               <td :style="{ color: row.ratio > 1 ? 'var(--positive, #98c379)' : 'var(--negative, #e06c75)' }">
                 {{ row.ratio === Infinity ? '∞' : row.ratio.toFixed(2) }}
+              </td>
+              <td v-if="copresenceWeighted" :style="{ color: row.wRatio > 1 ? 'var(--positive, #98c379)' : 'var(--negative, #e06c75)' }">
+                {{ row.wRatio === Infinity ? '∞' : row.wRatio.toFixed(2) }}
               </td>
               <td>{{ row.pvalue < 0.001 ? row.pvalue.toExponential(1) : row.pvalue.toFixed(3) }}</td>
               <td>
@@ -884,6 +943,7 @@
         :population="population"
         :classLabels="[]"
         :active="subTab === 'ecosystem'"
+        @module-filter-applied="onModuleFilterApplied"
       />
     </div>
 
@@ -899,6 +959,166 @@
       />
     </div>
 
+    <!-- ============================================================ -->
+    <!-- BASKET SUB-TAB                                               -->
+    <!-- ============================================================ -->
+    <div v-if="subTab === 'basket'" class="sub-content">
+      <p v-if="basketCount === 0" class="info-text">
+        {{ $t('results.basketEmpty') }}
+      </p>
+
+      <template v-if="basketCount > 0">
+        <div class="basket-header">
+          <span class="basket-count-label">
+            {{ $t('results.basketCount', { n: basketCount, max: MAX_BASKET_SIZE }) }}
+          </span>
+          <button class="btn-sm btn-outline" @click="confirmClearBasket">
+            {{ $t('results.basketClearAll') }}
+          </button>
+        </div>
+
+        <!-- Basket models table -->
+        <section class="section">
+          <h3>{{ $t('results.basketModels') }}</h3>
+          <table class="pop-table">
+            <thead>
+              <tr>
+                <th style="width:30px"></th>
+                <th>{{ $t('results.colName') }}</th>
+                <th>{{ $t('results.rank') }}</th>
+                <th>{{ $t('results.auc') }}</th>
+                <th>{{ $t('results.fit') }}</th>
+                <th>{{ $t('results.accuracy') }}</th>
+                <th>{{ $t('results.sensitivity') }}</th>
+                <th>{{ $t('results.specificity') }}</th>
+                <th>{{ $t('results.k') }}</th>
+                <th>{{ $t('results.language') }}</th>
+                <th>{{ $t('results.dataType') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template v-for="item in basketItems" :key="item.id">
+                <tr @click="toggleBasketExpand(item.id)" class="clickable-row">
+                  <td @click.stop>
+                    <button class="btn-icon btn-delete" @click.stop="removeFromBasket(item.id)" :title="$t('results.basketRemove')">
+                      <SvgIcon name="x" :size="12" />
+                    </button>
+                  </td>
+                  <td :title="item.jobId">{{ item.jobName }}</td>
+                  <td>{{ item.rank + 1 }}</td>
+                  <td>{{ item.metrics.auc?.toFixed(4) }}</td>
+                  <td>{{ item.metrics.fit?.toFixed(4) }}</td>
+                  <td>{{ item.metrics.accuracy?.toFixed(4) }}</td>
+                  <td>{{ item.metrics.sensitivity?.toFixed(4) }}</td>
+                  <td>{{ item.metrics.specificity?.toFixed(4) }}</td>
+                  <td>{{ item.metrics.k }}</td>
+                  <td>{{ item.metrics.language }}</td>
+                  <td>{{ item.metrics.data_type }}</td>
+                </tr>
+                <tr v-if="basketExpandedId === item.id" class="detail-row">
+                  <td colspan="11">
+                    <div class="feature-list">
+                      <div
+                        v-for="[name, coef] in sortedFeatures(item.named_features)"
+                        :key="name"
+                        class="feature-chip"
+                        :class="{ positive: coef > 0, negative: coef < 0 }"
+                      >
+                        {{ featureLabel(name) }} ({{ coef > 0 ? '+' : '' }}{{ coef }})
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- Metrics comparison chart (needs >= 2 models) -->
+        <section class="section" v-if="basketCount >= 2">
+          <h3>{{ $t('results.basketMetricsComparison') }}</h3>
+          <div ref="basketMetricsChartEl" class="plotly-chart"></div>
+        </section>
+
+        <!-- Feature overlap -->
+        <section class="section" v-if="basketCount >= 2">
+          <h3>{{ $t('results.basketFeatureOverlap') }}</h3>
+          <div class="basket-feature-stats">
+            <span class="stat-pill">{{ $t('results.commonToAll') }}: {{ basketFeatureIntersection.length }}</span>
+            <span class="stat-pill">{{ $t('results.unionAny') }}: {{ basketFeatureUnion.length }}</span>
+            <span class="stat-pill" v-if="basketFeatureUnion.length > 0">{{ $t('results.overlapRatio') }}: {{ (basketFeatureIntersection.length / basketFeatureUnion.length * 100).toFixed(1) }}%</span>
+          </div>
+          <div v-if="basketFeatureIntersection.length > 0" class="basket-consensus">
+            <strong>{{ $t('results.basketConsensusFeatures') }}</strong>
+            <span v-for="f in basketFeatureIntersection" :key="f" class="feature-chip positive">{{ featureLabel(f) }}</span>
+          </div>
+          <div ref="basketFeatureOverlapEl" class="plotly-chart"></div>
+        </section>
+
+        <!-- Coefficient heatmap -->
+        <section class="section" v-if="basketCount >= 2">
+          <h3>{{ $t('results.basketCoefficientHeatmap') }}</h3>
+          <div ref="basketHeatmapEl" class="plotly-chart"></div>
+        </section>
+      </template>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- CONSOLE LOG SUB-TAB                                          -->
+    <!-- ============================================================ -->
+    <div v-if="detail && subTab === 'console'" class="sub-content">
+      <!-- Timing Flamegraph (debug mode only) -->
+      <div v-if="debugMode && timingData" class="flamegraph-panel">
+        <h3>{{ $t('results.timingFlamegraph') }}</h3>
+        <div class="flamegraph-bar">
+          <div
+            v-for="(phase, i) in timingData.phases"
+            :key="i"
+            class="flamegraph-segment"
+            :style="{ width: (phase.duration_s / timingData.wall_total_s * 100) + '%', background: flamegraphColors[i % flamegraphColors.length] }"
+            :title="`${phase.label}: ${phase.duration_s}s (${(phase.duration_s / timingData.wall_total_s * 100).toFixed(1)}%)`"
+          >
+            <span v-if="phase.duration_s / timingData.wall_total_s > 0.08" class="flamegraph-label">{{ phase.label }}</span>
+          </div>
+        </div>
+        <div class="flamegraph-legend">
+          <div v-for="(phase, i) in timingData.phases" :key="i" class="flamegraph-legend-item">
+            <span class="flamegraph-swatch" :style="{ background: flamegraphColors[i % flamegraphColors.length] }"></span>
+            <span class="flamegraph-legend-label">{{ phase.label }}</span>
+            <span class="flamegraph-legend-value">{{ phase.duration_s }}s ({{ (phase.duration_s / timingData.wall_total_s * 100).toFixed(1) }}%)</span>
+          </div>
+          <div class="flamegraph-total">{{ $t('results.totalWallTime') }}: {{ timingData.wall_total_s }}s</div>
+        </div>
+      </div>
+
+      <div class="console-log-panel">
+        <div class="console-header">
+          <h3>{{ $t('results.consoleLog') }}</h3>
+          <div class="console-actions">
+            <button class="btn-sm btn-outline" @click="loadConsoleLog" :disabled="consoleLogLoading">
+              {{ consoleLogLoading ? $t('results.loading') : $t('results.refresh') }}
+            </button>
+            <button class="btn-sm btn-outline" @click="copyConsoleLog" v-if="consoleLogContent">
+              {{ consoleLogCopied ? $t('results.copied') : $t('results.copyLog') }}
+            </button>
+            <button class="btn-sm btn-outline" @click="downloadConsoleLog" v-if="consoleLogContent">
+              {{ $t('results.downloadLog') }}
+            </button>
+          </div>
+        </div>
+        <div v-if="consoleLogLoading" class="loading">{{ $t('results.loadingResults') }}</div>
+        <div v-else-if="consoleLogContent" class="console-log-viewer">
+          <div class="console-log-info">
+            <span>{{ consoleLogLines }} {{ $t('results.lines') }}</span>
+            <span v-if="selectedJobInfo">{{ $t('results.status') }}: <strong :class="selectedJobInfo.status">{{ selectedJobInfo.status }}</strong></span>
+            <span v-if="selectedJobInfo?.duration_seconds">{{ $t('results.duration') }}: {{ formatDuration(selectedJobInfo.duration_seconds) }}</span>
+          </div>
+          <pre class="console-log-content" ref="consoleLogEl">{{ consoleLogContent }}</pre>
+        </div>
+        <div v-else class="empty">{{ $t('results.noLogsAvailable') }}</div>
+      </div>
+    </div>
+
     <!-- Empty states -->
     <div v-if="!detail && jobs.length === 0" class="empty">
       {{ $t('results.noJobsYet') }}
@@ -912,8 +1132,9 @@
 
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useProjectStore } from '../stores/project'
+import { useConfigStore } from '../stores/config'
 import { useChartTheme } from '../composables/useChartTheme'
 import { useShapValues } from '../composables/useShapValues'
 import axios from 'axios'
@@ -922,6 +1143,8 @@ import { useI18n } from 'vue-i18n'
 import SvgIcon from '../components/SvgIcon.vue'
 import EcosystemTab from '../components/results/EcosystemTab.vue'
 import StabilityTab from '../components/results/StabilityTab.vue'
+import { useDebugMode } from '../composables/useDebugMode'
+import { useModelBasket } from '../composables/useModelBasket'
 // Lazy-load Plotly for better initial page load
 let Plotly = null
 async function ensurePlotly() {
@@ -933,10 +1156,25 @@ async function ensurePlotly() {
 }
 
 const route = useRoute()
+const router = useRouter()
 const store = useProjectStore()
+const configStore = useConfigStore()
 const { themeStore, chartColors, chartLayout, featureLabel: _featureLabel, FUNC_PROPS } = useChartTheme()
 const { computeShapMatrix } = useShapValues()
 const { t } = useI18n()
+const { debugMode } = useDebugMode()
+const {
+  basketItems, basketCount, basketFull,
+  isInBasket, addToBasket, removeFromBasket, clearBasket, toggleBasket,
+  MAX_BASKET_SIZE,
+} = useModelBasket(route.params.id)
+
+// Flamegraph colors for timing phases
+const flamegraphColors = [
+  '#4fc3f7', '#ff7043', '#66bb6a', '#ab47bc',
+  '#ffa726', '#26c6da', '#ef5350', '#8d6e63',
+  '#78909c', '#d4e157',
+]
 
 // ---------------------------------------------------------------------------
 // State
@@ -947,6 +1185,7 @@ const fullResults = ref(null)
 const population = ref([])
 const generationTracking = ref([])
 const mspAnnotations = ref({})
+const moduleFilterData = ref(null)
 const subTab = ref('summary')
 const selectedJobId = ref('')
 const expandedRank = ref(null)
@@ -962,13 +1201,18 @@ const importanceData = ref(null)
 const selectedLanguages = ref([])
 const selectedDataTypes = ref([])
 const fbmEnabled = ref(false)
+const fbmMethod = ref('standard')
 
 // PCoA on FBM features state
 const popPcoaData = ref(null)
 const loadingPopPcoa = ref(false)
+const popPcoaMethod = ref('pcoa')
 const popPcoaMetric = ref('braycurtis')
 const popPcoaDim = ref('2d')
 const popPcoaShowEllipses = ref(true)
+const popTsnePerplexity = ref(30)
+const popUmapNeighbors = ref(15)
+const popUmapMinDist = ref(0.1)
 
 // Comparative state
 const compareJobIds = ref([])
@@ -1042,6 +1286,7 @@ const copresencePrevalenceEl = ref(null)
 const copresenceHeatmapEl = ref(null)
 const copresenceNetworkEl = ref(null)
 const copresenceFBM = ref(true)
+const copresenceWeighted = ref(false)
 const copresenceMinPrev = ref(2)
 const copresenceAlpha = ref(0.1)
 const funcAnnotChartEl = ref(null)
@@ -1054,6 +1299,11 @@ const networkLayoutOptions = computed(() => [
   { value: 'grid', label: t('results.grid') },
   { value: 'radial', label: t('results.radial') },
 ])
+// Basket
+const basketMetricsChartEl = ref(null)
+const basketFeatureOverlapEl = ref(null)
+const basketHeatmapEl = ref(null)
+const basketExpandedId = ref(null)
 
 // ---------------------------------------------------------------------------
 // Computed
@@ -1068,6 +1318,20 @@ const selectedJobInfo = computed(() => {
 })
 
 const failedJobLog = ref('')
+
+// Console log viewer state
+const consoleLogContent = ref('')
+const consoleLogLoading = ref(false)
+const consoleLogCopied = ref(false)
+const consoleLogEl = ref(null)
+const consoleLogLines = computed(() => consoleLogContent.value ? consoleLogContent.value.split('\n').length : 0)
+
+// Timing data for flamegraph (from results.timing stored by worker)
+const timingData = computed(() => {
+  const raw = fullResults.value?.timing
+  if (!raw || !raw.phases || !raw.phases.length) return null
+  return raw
+})
 
 const filteredJobs = computed(() => {
   let arr = [...jobs.value]
@@ -1123,15 +1387,17 @@ const availableDataTypes = computed(() =>
 )
 
 // FBM filter function (P2.3)
+// Standard: threshold = r - z * sqrt(r*(1-r)/n)
+// Blaise:   threshold = r - (0.5/n + z * sqrt(r*(1-r)/n))
 function filterFBM(pop) {
   if (pop.length === 0) return []
   const bestFit = pop[0].metrics?.fit
   if (bestFit == null) return pop
-  // Use sample count from detail if available, otherwise use population size
   const n = detail.value?.sample_count || pop.length
   const z = 1.96 // for alpha=0.05
   const se = Math.sqrt(bestFit * (1 - bestFit) / n)
-  const threshold = bestFit - z * se
+  const correction = fbmMethod.value === 'blaise' ? 0.5 / n : 0
+  const threshold = bestFit - (correction + z * se)
   return pop.filter(ind => ind.metrics?.fit >= threshold)
 }
 
@@ -1214,14 +1480,23 @@ function pvalueLess(observed, N, ni, nj) {
 // Co-presence: compute pairwise co-occurrence statistics
 const copresenceData = computed(() => {
   const pop = copresencePopulation.value
-  if (pop.length < 2) return { features: [], prevalence: {}, matrix: [], pairs: [] }
+  if (pop.length < 2) return { features: [], prevalence: {}, accuracy: {}, matrix: [], pairs: [] }
 
-  // Build feature prevalence (count of models containing each feature)
+  // Build feature prevalence and accuracy sums
   const prevalence = {}
+  const accSum = {}
   for (const ind of pop) {
+    const acc = ind.metrics?.fit || 0
     for (const name of Object.keys(ind.named_features || {})) {
       prevalence[name] = (prevalence[name] || 0) + 1
+      accSum[name] = (accSum[name] || 0) + acc
     }
+  }
+
+  // Per-feature mean accuracy
+  const accuracy = {}
+  for (const [name, count] of Object.entries(prevalence)) {
+    accuracy[name] = count > 0 ? accSum[name] / count : 0
   }
 
   // Filter features by minimum prevalence
@@ -1231,15 +1506,16 @@ const copresenceData = computed(() => {
     .sort((a, b) => b[1] - a[1])
     .map(([name]) => name)
 
-  if (features.length < 2) return { features, prevalence, matrix: [], pairs: [] }
+  if (features.length < 2) return { features, prevalence, accuracy, matrix: [], pairs: [] }
 
   const N = pop.length
   const fSet = new Set(features)
+  const weighted = copresenceWeighted.value
 
   // Warm up log-factorial cache
   logFact(N)
 
-  // Build binary presence per model (only for filtered features)
+  // Build presence per model and model accuracies
   const presenceByModel = pop.map(ind => {
     const s = new Set()
     for (const name of Object.keys(ind.named_features || {})) {
@@ -1247,16 +1523,24 @@ const copresenceData = computed(() => {
     }
     return s
   })
+  const modelAccuracies = pop.map(ind => ind.metrics?.fit || 0)
 
-  // Compute pairwise co-occurrence
+  // Compute pairwise co-occurrence (binary + weighted)
   const cooccurCounts = {}
+  const cooccurWeighted = {}
   for (let i = 0; i < features.length; i++) {
     for (let j = i + 1; j < features.length; j++) {
       let count = 0
-      for (const ps of presenceByModel) {
-        if (ps.has(features[i]) && ps.has(features[j])) count++
+      let wCount = 0
+      for (let m = 0; m < presenceByModel.length; m++) {
+        if (presenceByModel[m].has(features[i]) && presenceByModel[m].has(features[j])) {
+          count++
+          wCount += modelAccuracies[m]
+        }
       }
-      cooccurCounts[`${i},${j}`] = count
+      const key = `${i},${j}`
+      cooccurCounts[key] = count
+      cooccurWeighted[key] = wCount
     }
   }
 
@@ -1264,6 +1548,7 @@ const copresenceData = computed(() => {
   const matrix = features.map(() => features.map(() => 1))
   const pairs = []
   const alpha = copresenceAlpha.value
+  const totalAccSum = modelAccuracies.reduce((a, b) => a + b, 0)
 
   for (let i = 0; i < features.length; i++) {
     for (let j = i + 1; j < features.length; j++) {
@@ -1271,16 +1556,20 @@ const copresenceData = computed(() => {
       const nj = prevalence[features[j]]
       const observed = cooccurCounts[`${i},${j}`]
       const expected = (ni * nj) / N
-
-      // Ratio of observed to expected
       const ratio = expected > 0 ? observed / expected : (observed > 0 ? Infinity : 1)
 
-      matrix[i][j] = ratio
-      matrix[j][i] = ratio
+      // Accuracy-weighted ratio
+      const wObs = cooccurWeighted[`${i},${j}`]
+      const wExp = totalAccSum > 0 ? (accSum[features[i]] * accSum[features[j]]) / totalAccSum : 0
+      const wRatio = wExp > 0 ? wObs / wExp : (wObs > 0 ? Infinity : 1)
 
-      // Hypergeometric test (same as R cooccur package)
-      const pGt = pvalueGreater(observed, N, ni, nj)  // positive co-occurrence
-      const pLt = pvalueLess(observed, N, ni, nj)      // negative (exclusion)
+      const displayRatio = weighted ? wRatio : ratio
+      matrix[i][j] = displayRatio
+      matrix[j][i] = displayRatio
+
+      // Hypergeometric test (always on integer counts)
+      const pGt = pvalueGreater(observed, N, ni, nj)
+      const pLt = pvalueLess(observed, N, ni, nj)
       const pval = Math.min(pGt, pLt)
       const type = pGt < pLt ? 'positive' : 'negative'
 
@@ -1291,19 +1580,20 @@ const copresenceData = computed(() => {
           observed,
           expected,
           ratio,
+          wObserved: Math.round(wObs * 100) / 100,
+          wRatio: Math.round(wRatio * 100) / 100,
           pvalue: pval,
           type,
           strength: -Math.log10(Math.max(pval, 1e-300)),
         })
       }
     }
-    matrix[i][i] = prevalence[features[i]] / N // diagonal = self-prevalence
+    matrix[i][i] = prevalence[features[i]] / N
   }
 
-  // Sort pairs by strength descending
   pairs.sort((a, b) => b.strength - a.strength)
 
-  return { features, prevalence, matrix, pairs }
+  return { features, prevalence, accuracy, matrix, pairs }
 })
 
 const copresenceStats = computed(() => copresenceData.value.pairs)
@@ -1433,9 +1723,48 @@ function featureLabel(name) {
   return _featureLabel(name, mspAnnotations.value)
 }
 
+// Module filter integration
+const moduleFilteredIndices = computed(() => {
+  if (!moduleFilterData.value) return null
+  return new Set(moduleFilterData.value.filtered_models.map(m => m.index))
+})
+
+function onModuleFilterApplied(data) {
+  moduleFilterData.value = data
+}
+
 function toggleExpand(rank) {
   expandedRank.value = expandedRank.value === rank ? null : rank
 }
+
+function toggleBasketExpand(id) {
+  basketExpandedId.value = basketExpandedId.value === id ? null : id
+}
+
+function confirmClearBasket() {
+  if (confirm(t('results.basketConfirmClear'))) {
+    clearBasket()
+  }
+}
+
+const basketFeatureIntersection = computed(() => {
+  if (basketItems.value.length < 2) return []
+  const sets = basketItems.value.map(item => new Set(Object.keys(item.named_features || {})))
+  let common = new Set(sets[0])
+  for (let i = 1; i < sets.length; i++) {
+    common = new Set([...common].filter(f => sets[i].has(f)))
+  }
+  return [...common].sort()
+})
+
+const basketFeatureUnion = computed(() => {
+  if (basketItems.value.length < 2) return []
+  const all = new Set()
+  for (const item of basketItems.value) {
+    for (const name of Object.keys(item.named_features || {})) all.add(name)
+  }
+  return [...all].sort()
+})
 
 // ---------------------------------------------------------------------------
 // MSP Annotations
@@ -2201,13 +2530,20 @@ async function loadPopPcoa() {
   const pid = route.params.id
   loadingPopPcoa.value = true
   try {
-    const params = { metric: popPcoaMetric.value, features: featureNames.join(',') }
-    const { data } = await axios.get(`/api/data-explore/${pid}/pcoa`, { params })
+    const params = { method: popPcoaMethod.value, metric: popPcoaMetric.value, features: featureNames.join(',') }
+    if (popPcoaMethod.value === 'tsne') {
+      params.perplexity = popTsnePerplexity.value
+    } else if (popPcoaMethod.value === 'umap') {
+      params.n_neighbors = popUmapNeighbors.value
+      params.min_dist = popUmapMinDist.value
+    }
+    if (popPcoaDim.value === '3d') params.n_components = 3
+    const { data } = await axios.get(`/api/data-explore/${pid}/ordination`, { params })
     popPcoaData.value = data
     await nextTick()
     renderPopPcoaChart()
   } catch (e) {
-    console.error('Failed to load population PCoA:', e)
+    console.error('Failed to load population ordination:', e)
     popPcoaData.value = null
   } finally {
     loadingPopPcoa.value = false
@@ -2221,6 +2557,15 @@ async function renderPopPcoaChart() {
   const c = chartColors()
   const d = popPcoaData.value
   const ve = d.variance_explained
+  const method = d.method || popPcoaMethod.value
+
+  const axisLabel = (dim) => {
+    if (method === 'pcoa' && ve) return `PCo${dim} (${ve[dim - 1]}%)`
+    if (method === 'tsne') return `t-SNE ${dim}`
+    if (method === 'umap') return `UMAP ${dim}`
+    return `Dim ${dim}`
+  }
+  const hoverPrefix = method === 'pcoa' ? 'PCo' : method === 'tsne' ? 't-SNE ' : method === 'umap' ? 'UMAP ' : 'Dim '
 
   const palette = [c.class0, c.class1, c.accent, c.danger]
   const classColorMap = {}
@@ -2237,15 +2582,15 @@ async function renderPopPcoaChart() {
         mode: 'markers', type: 'scatter3d',
         name: `Class ${cls}`,
         marker: { color: classColorMap[cls], size: 4, opacity: 0.85 },
-        hovertemplate: '%{text}<br>PCo1: %{x:.3f}<br>PCo2: %{y:.3f}<br>PCo3: %{z:.3f}<extra></extra>',
+        hovertemplate: `%{text}<br>${hoverPrefix}1: %{x:.3f}<br>${hoverPrefix}2: %{y:.3f}<br>${hoverPrefix}3: %{z:.3f}<extra></extra>`,
       }
     })
     P.newPlot(popPcoaChartEl.value, traces, {
       ...chartLayout({ height: 550 }),
       scene: {
-        xaxis: { title: { text: `PCo1 (${ve[0]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
-        yaxis: { title: { text: `PCo2 (${ve[1]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
-        zaxis: { title: { text: `PCo3 (${ve[2]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        xaxis: { title: { text: axisLabel(1), font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        yaxis: { title: { text: axisLabel(2), font: { color: c.text } }, gridcolor: c.grid, color: c.text },
+        zaxis: { title: { text: axisLabel(3), font: { color: c.text } }, gridcolor: c.grid, color: c.text },
         bgcolor: c.paper,
       },
       legend: { orientation: 'h', y: -0.05, font: { color: c.text } },
@@ -2260,7 +2605,7 @@ async function renderPopPcoaChart() {
         mode: 'markers', type: 'scatter',
         name: `Class ${cls}`,
         marker: { color: classColorMap[cls], size: 7, opacity: 0.8, line: { color: classColorMap[cls], width: 0.5 } },
-        hovertemplate: '%{text}<br>PCo1: %{x:.3f}<br>PCo2: %{y:.3f}<extra></extra>',
+        hovertemplate: `%{text}<br>${hoverPrefix}1: %{x:.3f}<br>${hoverPrefix}2: %{y:.3f}<extra></extra>`,
       }
     })
 
@@ -2282,8 +2627,8 @@ async function renderPopPcoaChart() {
     }
 
     P.newPlot(popPcoaChartEl.value, traces, chartLayout({
-      xaxis: { title: { text: `PCo1 (${ve[0]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
-      yaxis: { title: { text: `PCo2 (${ve[1]}%)`, font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
+      xaxis: { title: { text: axisLabel(1), font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
+      yaxis: { title: { text: axisLabel(2), font: { color: c.text } }, gridcolor: c.grid, color: c.text, zeroline: true, zerolinecolor: c.grid },
       legend: { orientation: 'h', y: 1.12, font: { color: c.text } },
       height: 500,
     }), { responsive: true, displayModeBar: false })
@@ -2624,21 +2969,22 @@ function renderJuryCharts() {
 async function renderCopresencePrevalence() {
   await nextTick()
   if (!copresencePrevalenceEl.value) return
-  const { features, prevalence } = copresenceData.value
+  const { features, prevalence, accuracy } = copresenceData.value
   if (features.length === 0) return
 
   const c = chartColors()
-  // Sort ascending so most prevalent is at top of horizontal bar chart
   const sorted = [...features].sort((a, b) => prevalence[a] - prevalence[b])
   const N = copresencePopulation.value.length
+  const weighted = copresenceWeighted.value
 
-  Plotly.newPlot(copresencePrevalenceEl.value, [{
+  const traces = [{
     type: 'bar',
     orientation: 'h',
     y: sorted.map(n => featureLabel(n)),
     x: sorted.map(n => prevalence[n]),
     text: sorted.map(n => `${((prevalence[n] / N) * 100).toFixed(0)}%`),
     textposition: 'outside',
+    name: t('results.minPrevalence'),
     marker: {
       color: sorted.map(n => {
         const pct = prevalence[n] / N
@@ -2646,13 +2992,36 @@ async function renderCopresencePrevalence() {
       }),
     },
     hovertemplate: '%{y}: %{x} models (%{text})<extra></extra>',
-  }], chartLayout({
+  }]
+
+  const layout = {
     xaxis: { title: { text: 'Models containing feature', font: { color: c.text } }, gridcolor: c.grid, color: c.text },
     yaxis: { automargin: true, color: c.text },
     height: Math.max(300, sorted.length * 22 + 80),
-    margin: { t: 20, b: 50, l: 200, r: 60 },
-    showlegend: false,
-  }), { responsive: true, displayModeBar: false })
+    margin: { t: 20, b: 50, l: 200, r: weighted ? 80 : 60 },
+    showlegend: weighted,
+  }
+
+  if (weighted) {
+    traces.push({
+      type: 'scatter',
+      mode: 'markers',
+      y: sorted.map(n => featureLabel(n)),
+      x: sorted.map(n => accuracy[n]),
+      name: t('results.meanAccuracy'),
+      xaxis: 'x2',
+      marker: { color: c.danger, size: 7, symbol: 'diamond' },
+      hovertemplate: '%{y}: mean acc = %{x:.3f}<extra></extra>',
+    })
+    layout.xaxis2 = {
+      title: { text: t('results.meanAccuracy'), font: { color: c.danger } },
+      overlaying: 'x', side: 'top', gridcolor: 'transparent', color: c.danger,
+      range: [0, 1],
+    }
+    layout.legend = { orientation: 'h', y: -0.15, font: { color: c.text } }
+  }
+
+  Plotly.newPlot(copresencePrevalenceEl.value, traces, chartLayout(layout), { responsive: true, displayModeBar: false })
 }
 
 async function renderCopresenceHeatmap() {
@@ -2809,12 +3178,13 @@ function layoutForceDirected(nNodes, features, prevalence, pairs) {
 async function renderCopresenceNetwork() {
   await nextTick()
   if (!copresenceNetworkEl.value) return
-  const { features, prevalence, pairs } = copresenceData.value
+  const { features, prevalence, accuracy, pairs } = copresenceData.value
   if (features.length < 2 || pairs.length === 0) return
 
   const c = chartColors()
   const N = copresencePopulation.value.length
   const nNodes = features.length
+  const weighted = copresenceWeighted.value
 
   // Compute layout based on selected algorithm
   let pos
@@ -2838,20 +3208,21 @@ async function renderCopresenceNetwork() {
   const featureIdx = {}
   features.forEach((f, i) => { featureIdx[f] = i })
 
-  // Draw edges
+  // Draw edges (width based on weighted ratio when in weighted mode)
   const edgeTraces = []
   for (const pair of pairs) {
     const i = featureIdx[pair.f1]
     const j = featureIdx[pair.f2]
     if (i === undefined || j === undefined) continue
     const isPos = pair.type === 'positive'
+    const edgeStrength = weighted ? Math.max(0.5, pair.wRatio) : pair.strength
     edgeTraces.push({
       type: 'scatter', mode: 'lines',
       x: [nodeX[i], nodeX[j], null],
       y: [nodeY[i], nodeY[j], null],
       line: {
         color: isPos ? 'rgba(100, 200, 100, 0.5)' : 'rgba(200, 80, 80, 0.4)',
-        width: Math.min(4, 1 + pair.strength * 0.3),
+        width: weighted ? Math.min(5, 1 + edgeStrength * 0.8) : Math.min(4, 1 + pair.strength * 0.3),
         dash: isPos ? 'solid' : 'dash',
       },
       hoverinfo: 'skip',
@@ -2859,8 +3230,9 @@ async function renderCopresenceNetwork() {
     })
   }
 
-  // Draw nodes
+  // Draw nodes — size by mean accuracy when weighted, prevalence otherwise
   const maxPrev = Math.max(...features.map(f => prevalence[f]))
+  const maxAcc = Math.max(...features.map(f => accuracy[f] || 0), 0.01)
   const nodeTrace = {
     type: 'scatter', mode: 'markers+text',
     x: nodeX,
@@ -2869,16 +3241,25 @@ async function renderCopresenceNetwork() {
     textposition: 'top center',
     textfont: { color: c.text, size: 9 },
     marker: {
-      size: features.map(f => 10 + (prevalence[f] / maxPrev) * 25),
+      size: features.map(f => weighted
+        ? 10 + ((accuracy[f] || 0) / maxAcc) * 25
+        : 10 + (prevalence[f] / maxPrev) * 25
+      ),
       color: features.map(f => {
+        if (weighted) {
+          const acc = accuracy[f] || 0
+          return acc > 0.85 ? c.accent : acc > 0.7 ? c.class0Light : c.class1Light
+        }
         const pct = prevalence[f] / N
         return pct > 0.75 ? c.accent : pct > 0.5 ? c.class0Light : c.class1Light
       }),
       line: { color: c.text, width: 1 },
       opacity: 0.85,
     },
-    hovertemplate: '%{text}<br>Prevalence: %{customdata} models<extra></extra>',
-    customdata: features.map(f => prevalence[f]),
+    hovertemplate: weighted
+      ? '%{text}<br>Prevalence: %{customdata[0]} models<br>Mean acc: %{customdata[1]:.3f}<extra></extra>'
+      : '%{text}<br>Prevalence: %{customdata[0]} models<extra></extra>',
+    customdata: features.map(f => [prevalence[f], accuracy[f] || 0]),
     showlegend: false,
   }
 
@@ -3133,12 +3514,44 @@ async function loadFailedJobLog() {
   }
 }
 
+async function loadConsoleLog() {
+  if (!selectedJobId.value) return
+  consoleLogLoading.value = true
+  consoleLogContent.value = ''
+  const pid = route.params.id
+  try {
+    const { data } = await axios.get(`/api/analysis/${pid}/jobs/${selectedJobId.value}/logs`)
+    consoleLogContent.value = data.log || ''
+  } catch {
+    consoleLogContent.value = ''
+  } finally {
+    consoleLogLoading.value = false
+  }
+}
+
+function copyConsoleLog() {
+  navigator.clipboard.writeText(consoleLogContent.value)
+  consoleLogCopied.value = true
+  setTimeout(() => { consoleLogCopied.value = false }, 2000)
+}
+
+function downloadConsoleLog() {
+  const blob = new Blob([consoleLogContent.value], { type: 'text/plain' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${selectedJobId.value}_console.log`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 // ---------------------------------------------------------------------------
 // Job table helpers
 // ---------------------------------------------------------------------------
 function selectJob(jobId) {
   selectedJobId.value = jobId
   failedJobLog.value = ''
+  consoleLogContent.value = ''
   loadJobResults()
 }
 
@@ -3294,6 +3707,42 @@ async function confirmDeleteJob(job) {
 }
 
 // ---------------------------------------------------------------------------
+// Rerun / Duplicate
+// ---------------------------------------------------------------------------
+const rerunLoading = ref(false)
+
+async function rerunJob(job) {
+  if (rerunLoading.value) return
+  rerunLoading.value = true
+  const pid = route.params.id
+  try {
+    const { data } = await axios.post(
+      `/api/analysis/${pid}/jobs/${job.job_id}/rerun`
+    )
+    store.startJob(data.job_id)
+    await loadJobList()
+    selectJob(data.job_id)
+  } catch (e) {
+    alert(t('results.rerunFailed') + ': ' + (e.response?.data?.detail || e.message))
+  } finally {
+    rerunLoading.value = false
+  }
+}
+
+async function duplicateJob(job) {
+  const pid = route.params.id
+  try {
+    const { data } = await axios.get(`/api/analysis/${pid}/jobs/${job.job_id}/config`)
+    if (data.config) {
+      configStore.loadFromJobConfig(data.config)
+      router.push(`/project/${pid}/parameters`)
+    }
+  } catch (e) {
+    alert(t('results.duplicateFailed') + ': ' + (e.response?.data?.detail || e.message))
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Data loading
 // ---------------------------------------------------------------------------
 async function loadJobResults() {
@@ -3359,6 +3808,112 @@ async function loadJobList() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// BASKET CHARTS
+// ---------------------------------------------------------------------------
+async function renderBasketMetricsChart() {
+  await nextTick()
+  if (!basketMetricsChartEl.value || basketItems.value.length < 2) return
+  const c = chartColors()
+  const metricNames = ['auc', 'accuracy', 'sensitivity', 'specificity']
+  const labels = ['AUC', 'Accuracy', 'Sensitivity', 'Specificity']
+  const traces = basketItems.value.map((item, i) => {
+    const col = JOB_COLORS[i % JOB_COLORS.length]
+    return {
+      type: 'bar',
+      name: `${item.jobName} #${item.rank + 1}`,
+      x: labels,
+      y: metricNames.map(m => item.metrics?.[m] ?? 0),
+      marker: { color: col + '59', line: { color: col, width: 1.5 } },
+    }
+  })
+  Plotly.newPlot(basketMetricsChartEl.value, traces, chartLayout({
+    barmode: 'group',
+    yaxis: { title: { text: 'Value', font: { color: c.text } }, range: [0, 1.05], gridcolor: c.grid, color: c.text },
+    xaxis: { color: c.text },
+    height: 350,
+    legend: { orientation: 'h', y: 1.15, font: { color: c.text, size: 10 } },
+    margin: { t: 40, b: 50, l: 50, r: 20 },
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderBasketFeatureOverlap() {
+  await nextTick()
+  if (!basketFeatureOverlapEl.value || basketItems.value.length < 2) return
+  const c = chartColors()
+  const featureInfo = {}
+  for (const item of basketItems.value) {
+    for (const [name, coef] of Object.entries(item.named_features || {})) {
+      if (!featureInfo[name]) featureInfo[name] = { count: 0, pos: 0, neg: 0 }
+      featureInfo[name].count++
+      if (coef > 0) featureInfo[name].pos++
+      else featureInfo[name].neg++
+    }
+  }
+  const sorted = Object.keys(featureInfo).sort((a, b) => featureInfo[a].count - featureInfo[b].count)
+  if (sorted.length === 0) return
+  Plotly.newPlot(basketFeatureOverlapEl.value, [
+    {
+      type: 'bar', orientation: 'h', name: 'Positive (+)',
+      y: sorted.map(n => featureLabel(n)),
+      x: sorted.map(n => featureInfo[n].pos),
+      marker: { color: 'rgba(0,191,255,0.35)', line: { color: '#00BFFF', width: 1 } },
+    },
+    {
+      type: 'bar', orientation: 'h', name: 'Negative (-)',
+      y: sorted.map(n => featureLabel(n)),
+      x: sorted.map(n => featureInfo[n].neg),
+      marker: { color: 'rgba(255,48,48,0.35)', line: { color: '#FF3030', width: 1 } },
+    },
+  ], chartLayout({
+    barmode: 'stack',
+    xaxis: { title: { text: t('results.basketModelCount'), font: { color: c.text } }, gridcolor: c.grid, color: c.text, dtick: 1 },
+    yaxis: { automargin: true, color: c.text },
+    height: Math.max(300, sorted.length * 20 + 80),
+    margin: { t: 20, b: 50, l: 180, r: 20 },
+    legend: { orientation: 'h', y: 1.08, font: { color: c.text } },
+  }), { responsive: true, displayModeBar: false })
+}
+
+async function renderBasketHeatmap() {
+  await nextTick()
+  if (!basketHeatmapEl.value || basketItems.value.length < 2) return
+  const c = chartColors()
+  const allFeatures = new Set()
+  for (const item of basketItems.value) {
+    for (const name of Object.keys(item.named_features || {})) allFeatures.add(name)
+  }
+  const featurePrev = {}
+  for (const name of allFeatures) {
+    featurePrev[name] = basketItems.value.filter(item => (item.named_features || {})[name] != null).length
+  }
+  const sortedNames = [...allFeatures].sort((a, b) => featurePrev[a] - featurePrev[b])
+  const matrix = sortedNames.map(fname => basketItems.value.map(item => (item.named_features || {})[fname] || 0))
+  const modelLabels = basketItems.value.map(item => `${item.jobName} #${item.rank + 1}`)
+  Plotly.newPlot(basketHeatmapEl.value, [{
+    type: 'heatmap',
+    z: matrix,
+    x: modelLabels,
+    y: sortedNames.map(n => featureLabel(n)),
+    colorscale: [[0, 'rgba(0,191,255,0.55)'], [0.5, c.paper], [1, 'rgba(255,48,48,0.55)']],
+    zmin: -1, zmax: 1, showscale: true,
+    colorbar: { tickvals: [-1, 0, 1], ticktext: ['-1', '0', '+1'], tickfont: { color: c.text, size: 9 }, len: 0.5, thickness: 12 },
+    xgap: 1, ygap: 1,
+    hovertemplate: '%{y}<br>%{x}: %{z}<extra></extra>',
+  }], chartLayout({
+    xaxis: { color: c.text, tickangle: -45 },
+    yaxis: { automargin: true, color: c.text },
+    height: Math.max(300, sortedNames.length * 22 + 100),
+    margin: { t: 20, b: 100, l: 180, r: 60 },
+  }), { responsive: true, displayModeBar: true })
+}
+
+function renderBasketCharts() {
+  renderBasketMetricsChart()
+  renderBasketFeatureOverlap()
+  renderBasketHeatmap()
+}
+
 async function renderActiveTab() {
   await ensurePlotly()
   if (subTab.value === 'summary') renderSummaryCharts()
@@ -3367,6 +3922,7 @@ async function renderActiveTab() {
   else if (subTab.value === 'jury') renderJuryCharts()
   else if (subTab.value === 'comparative') renderComparativeCharts()
   else if (subTab.value === 'copresence') renderCoPresenceCharts()
+  else if (subTab.value === 'basket') renderBasketCharts()
 }
 
 // ---------------------------------------------------------------------------
@@ -3385,6 +3941,11 @@ watch(() => route.params.jobId, (newId) => {
     loadJobResults()
   }
 })
+
+// Re-render basket charts when items change
+watch(basketItems, () => {
+  if (subTab.value === 'basket') nextTick(() => renderBasketCharts())
+}, { deep: true })
 
 // Reset job page on search change
 watch(jobSearch, () => { jobPage.value = 0 })
@@ -3421,6 +3982,7 @@ watch(shapSampleIdx, async () => { await nextTick(); if (shapView.value === 'for
 watch(shapFeatureIdx, async () => { await nextTick(); if (shapView.value === 'dependence') renderDependenceChart() })
 
 watch(copresenceFBM, debouncedCopresenceRender)
+watch(copresenceWeighted, debouncedCopresenceRender)
 watch(copresenceMinPrev, debouncedCopresenceRender)
 watch(copresenceAlpha, debouncedCopresenceRender)
 watch(networkLayout, () => {
@@ -3512,6 +4074,102 @@ onMounted(loadJobList)
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
 }
 .failed-log-hint { margin-top: 0.5rem; }
+
+/* Flamegraph */
+.flamegraph-panel {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+}
+.flamegraph-panel h3 {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+.flamegraph-bar {
+  display: flex;
+  height: 36px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.flamegraph-segment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2px;
+  cursor: default;
+  transition: opacity 0.15s;
+}
+.flamegraph-segment:hover { opacity: 0.8; }
+.flamegraph-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: #000;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 4px;
+}
+.flamegraph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  align-items: center;
+}
+.flamegraph-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.flamegraph-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.flamegraph-legend-label { font-weight: 500; }
+.flamegraph-legend-value { color: var(--text-muted); }
+.flamegraph-total {
+  margin-left: auto;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Console log viewer */
+.console-log-panel { }
+.console-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;
+}
+.console-header h3 { margin: 0; font-size: 1rem; }
+.console-actions { display: flex; gap: 0.5rem; }
+.console-log-info {
+  display: flex; gap: 1.5rem; font-size: 0.78rem; color: var(--text-muted);
+  margin-bottom: 0.5rem; flex-wrap: wrap;
+}
+.console-log-info strong { color: var(--text-primary); }
+.console-log-info .completed { color: var(--success, #98c379); }
+.console-log-info .failed { color: #e06c75; }
+.console-log-info .running { color: var(--info, #61afef); }
+.console-log-viewer { }
+.console-log-content {
+  margin: 0; padding: 1rem;
+  background: #0c0e1a;
+  border: 1px solid var(--border, rgba(255,255,255,0.06));
+  border-radius: 8px;
+  font-size: 0.75rem; line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre-wrap; word-break: break-all;
+  max-height: 70vh; overflow-y: auto;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+}
 
 /* Pending/running job panel */
 .pending-job-panel {
@@ -3689,9 +4347,14 @@ onMounted(loadJobList)
   align-items: center;
   justify-content: center;
   transition: all 0.15s;
+  color: var(--text-secondary);
+}
+.btn-icon:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
 }
 .btn-delete {
-  color: var(--text-faint);
+  color: var(--text-muted);
 }
 .btn-delete:hover:not(:disabled) {
   background: var(--danger-bg);
@@ -3970,6 +4633,78 @@ onMounted(loadJobList)
   border-radius: 10px;
   font-weight: 600;
 }
+.fbm-method-select {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text);
+  margin-left: 0.5rem;
+}
+/* Basket */
+.col-basket { width: 36px; text-align: center; padding: 0 4px !important; }
+.btn-basket {
+  font-size: 1.1rem;
+  color: var(--text-faint, #888);
+  transition: color 0.15s, transform 0.15s;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  line-height: 1;
+}
+.btn-basket.in-basket { color: var(--accent, #00BFFF); }
+.btn-basket:hover:not(:disabled) { transform: scale(1.25); }
+.btn-basket:disabled { opacity: 0.3; cursor: default; }
+.basket-badge {
+  display: inline-block;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin-left: 4px;
+  border-radius: 8px;
+  background: var(--accent, #00BFFF);
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  vertical-align: middle;
+}
+.basket-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.basket-count-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.basket-feature-stats {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+.stat-pill {
+  font-size: 0.78rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.basket-consensus {
+  margin-bottom: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+}
 .filter-row {
   display: flex;
   align-items: center;
@@ -4027,6 +4762,26 @@ onMounted(loadJobList)
   padding: 1rem;
 }
 .row-error td { color: var(--danger-dark); }
+
+/* Module filter highlight */
+.module-filtered {
+  background: rgba(25, 118, 210, 0.06);
+}
+.module-filtered:hover {
+  background: rgba(25, 118, 210, 0.12);
+}
+.module-badge {
+  display: inline-block;
+  background: var(--primary, #1976d2);
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  margin-left: 0.3rem;
+  vertical-align: middle;
+  line-height: 1;
+}
 
 .pagination {
   display: flex;

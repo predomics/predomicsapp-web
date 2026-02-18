@@ -218,15 +218,15 @@ function relativeDate(iso) {
   cursor: pointer;
   border-radius: 4px;
   font-size: 0.85rem;
-  color: var(--text-faint);
+  color: var(--text-secondary);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   transition: all 0.15s;
 }
 .btn-icon-sm:hover {
-  background: var(--bg-hover, rgba(0,0,0,0.05));
-  color: var(--text-secondary);
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
 }
 
 .desc {

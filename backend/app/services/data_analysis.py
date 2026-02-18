@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 import yaml
 
 logger = logging.getLogger(__name__)
@@ -496,6 +497,182 @@ def _compute_permanova(
     }
 
 
+def _load_and_prepare(
+    x_path: str,
+    y_path: str,
+    features_in_rows: bool = True,
+    metric: str = "braycurtis",
+    max_samples: int = 1000,
+    feature_names: list[str] | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str], list[str], str, int]:
+    """Shared data loading for ordination methods (PCoA / t-SNE / UMAP).
+
+    Returns (distance_matrix, coords_placeholder, y_int, sample_names,
+             class_labels, metric, n_features_used).
+    """
+    from scipy.spatial.distance import pdist, squareform
+
+    X = pd.read_csv(x_path, sep="\t", index_col=0)
+    y = pd.read_csv(y_path, sep="\t", index_col=0)
+
+    if features_in_rows:
+        X = X.T
+
+    if feature_names:
+        valid = [f for f in feature_names if f in X.columns]
+        if valid:
+            X = X[valid]
+
+    y_series = y.iloc[:, 0]
+    common = X.index.intersection(y_series.index)
+    X = X.loc[common]
+    y_series = y_series.loc[common]
+
+    if len(X) > max_samples:
+        sampled = []
+        for cls in sorted(y_series.unique()):
+            cls_idx = y_series[y_series == cls].index.tolist()
+            n_cls = max(1, int(max_samples * len(cls_idx) / len(y_series)))
+            step = max(1, len(cls_idx) // n_cls)
+            sampled.extend(cls_idx[::step][:n_cls])
+        X = X.loc[sampled]
+        y_series = y_series.loc[sampled]
+
+    mat = X.values.astype(float)
+    mat = np.nan_to_num(mat, nan=0.0)
+
+    try:
+        dists = pdist(mat, metric=metric)
+    except ValueError:
+        dists = pdist(mat, metric="euclidean")
+        metric = "euclidean"
+
+    D = squareform(dists)
+    class_labels = sorted([str(int(c)) for c in y_series.unique()])
+    y_int = y_series.astype(int).values
+    sample_names = X.index.tolist()
+    n_features_used = int(X.shape[1])
+
+    return D, y_int, sample_names, class_labels, metric, n_features_used
+
+
+def compute_tsne(
+    x_path: str,
+    y_path: str,
+    features_in_rows: bool = True,
+    metric: str = "euclidean",
+    max_samples: int = 1000,
+    feature_names: list[str] | None = None,
+    n_permutations: int = 999,
+    perplexity: float = 30.0,
+    n_components: int = 2,
+) -> dict[str, Any]:
+    """Compute t-SNE embedding with confidence ellipses and PERMANOVA.
+
+    Uses precomputed distance matrix with sklearn.manifold.TSNE.
+    """
+    from sklearn.manifold import TSNE
+
+    D, y_int, sample_names, class_labels, metric, n_features_used = _load_and_prepare(
+        x_path, y_path, features_in_rows, metric, max_samples, feature_names,
+    )
+    n = D.shape[0]
+
+    # Clamp perplexity to valid range (must be < n_samples)
+    perplexity = min(perplexity, max(1.0, (n - 1) / 3.0))
+
+    n_comp = min(n_components, 3)
+    tsne = TSNE(
+        n_components=n_comp,
+        metric="precomputed",
+        perplexity=perplexity,
+        random_state=42,
+        init="random",
+    )
+    coords_partial = tsne.fit_transform(D)
+
+    # Pad to 3 dimensions
+    coords = np.zeros((n, 3))
+    coords[:, :n_comp] = coords_partial
+
+    ellipses = _compute_ellipses(coords[:, :2], y_int, class_labels)
+    permanova = _compute_permanova(D, y_int, n_permutations=n_permutations)
+
+    return {
+        "coords": coords.tolist(),
+        "sample_names": sample_names,
+        "sample_classes": y_int.tolist(),
+        "class_labels": class_labels,
+        "variance_explained": None,
+        "metric": metric,
+        "n_samples": int(n),
+        "n_features_used": n_features_used,
+        "ellipses": ellipses,
+        "permanova": permanova,
+        "method": "tsne",
+        "params": {"perplexity": float(perplexity)},
+    }
+
+
+def compute_umap(
+    x_path: str,
+    y_path: str,
+    features_in_rows: bool = True,
+    metric: str = "braycurtis",
+    max_samples: int = 1000,
+    feature_names: list[str] | None = None,
+    n_permutations: int = 999,
+    n_neighbors: int = 15,
+    min_dist: float = 0.1,
+    n_components: int = 2,
+) -> dict[str, Any]:
+    """Compute UMAP embedding with confidence ellipses and PERMANOVA.
+
+    Uses precomputed distance matrix with umap.UMAP.
+    """
+    import umap
+
+    D, y_int, sample_names, class_labels, metric, n_features_used = _load_and_prepare(
+        x_path, y_path, features_in_rows, metric, max_samples, feature_names,
+    )
+    n = D.shape[0]
+
+    # Clamp n_neighbors to valid range
+    n_neighbors = min(n_neighbors, n - 1)
+
+    n_comp = min(n_components, 3)
+    reducer = umap.UMAP(
+        n_components=n_comp,
+        metric="precomputed",
+        n_neighbors=n_neighbors,
+        min_dist=min_dist,
+        random_state=42,
+    )
+    coords_partial = reducer.fit_transform(D)
+
+    # Pad to 3 dimensions
+    coords = np.zeros((n, 3))
+    coords[:, :n_comp] = coords_partial
+
+    ellipses = _compute_ellipses(coords[:, :2], y_int, class_labels)
+    permanova = _compute_permanova(D, y_int, n_permutations=n_permutations)
+
+    return {
+        "coords": coords.tolist(),
+        "sample_names": sample_names,
+        "sample_classes": y_int.tolist(),
+        "class_labels": class_labels,
+        "variance_explained": None,
+        "metric": metric,
+        "n_samples": int(n),
+        "n_features_used": n_features_used,
+        "ellipses": ellipses,
+        "permanova": permanova,
+        "method": "umap",
+        "params": {"n_neighbors": n_neighbors, "min_dist": float(min_dist)},
+    }
+
+
 def scan_dataset_metadata(
     x_path: str,
     y_path: str,
@@ -531,6 +708,77 @@ def scan_dataset_metadata(
         "sample_names": sample_names,
         "feature_names": feature_names,
         "scanned_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def compute_aberrant_correlations(
+    x_path: str, y_path: str, features_in_rows: bool = True,
+    min_prevalence_pct: float = 30.0, max_pairs: int = 5000,
+) -> dict:
+    """Compute Spearman correlations per class for aberrant correlation diagnostic.
+
+    Returns scatter data: for each feature pair, the correlation in class 0 vs class 1.
+    """
+    X = pd.read_csv(x_path, sep="\t", index_col=0)
+    y = pd.read_csv(y_path, sep="\t", index_col=0)
+    if features_in_rows:
+        X = X.T
+    y_series = y.iloc[:, 0]
+    common = X.index.intersection(y_series.index)
+    X, y_series = X.loc[common], y_series.loc[common]
+
+    # Prevalence filter
+    n_samples = X.shape[0]
+    prevalence = (X > 0).sum(axis=0) / n_samples * 100
+    kept = prevalence[prevalence >= min_prevalence_pct].index.tolist()
+    if len(kept) < 2:
+        return {"pairs": [], "n_features": 0, "n_pairs": 0}
+
+    # Split by class
+    mask0 = y_series == 0
+    mask1 = y_series == 1
+    X0 = X.loc[mask0, kept].values.astype(float)
+    X1 = X.loc[mask1, kept].values.astype(float)
+    X0 = np.nan_to_num(X0, nan=0.0)
+    X1 = np.nan_to_num(X1, nan=0.0)
+
+    n_feat = len(kept)
+    # Compute full correlation matrices per class
+    if n_feat <= 500:
+        rho0, _ = stats.spearmanr(X0, axis=0) if X0.shape[0] > 2 else (np.zeros((n_feat, n_feat)), None)
+        rho1, _ = stats.spearmanr(X1, axis=0) if X1.shape[0] > 2 else (np.zeros((n_feat, n_feat)), None)
+        if n_feat == 2:
+            rho0 = np.array([[1.0, rho0], [rho0, 1.0]])
+            rho1 = np.array([[1.0, rho1], [rho1, 1.0]])
+    else:
+        # Subsample features
+        rng = np.random.RandomState(42)
+        idx = rng.choice(n_feat, 500, replace=False)
+        idx.sort()
+        kept = [kept[i] for i in idx]
+        n_feat = 500
+        X0 = X.loc[mask0, kept].values.astype(float)
+        X1 = X.loc[mask1, kept].values.astype(float)
+        rho0, _ = stats.spearmanr(X0, axis=0)
+        rho1, _ = stats.spearmanr(X1, axis=0)
+
+    # Collect pairs (upper triangle)
+    pairs = []
+    for i in range(n_feat):
+        for j in range(i + 1, n_feat):
+            r0 = float(rho0[i, j]) if not np.isnan(rho0[i, j]) else 0.0
+            r1 = float(rho1[i, j]) if not np.isnan(rho1[i, j]) else 0.0
+            pairs.append({"r0": round(r0, 4), "r1": round(r1, 4), "f1": kept[i], "f2": kept[j]})
+            if len(pairs) >= max_pairs:
+                break
+        if len(pairs) >= max_pairs:
+            break
+
+    return {
+        "pairs": pairs,
+        "n_features": n_feat,
+        "n_pairs": len(pairs),
+        "feature_names": kept,
     }
 
 
