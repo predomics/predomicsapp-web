@@ -100,7 +100,11 @@
               <span>{{ label }}</span>
             </span>
           </div>
-          <div class="case-ref" v-if="uc.reference">{{ uc.reference }}</div>
+          <div class="case-ref" v-if="uc.reference">
+            <a v-if="uc.doi" :href="uc.doi" target="_blank" rel="noopener">{{ uc.reference }}</a>
+            <span v-else>{{ uc.reference }}</span>
+            <span v-if="uc.demo" class="demo-badge">Demo</span>
+          </div>
         </div>
       </div>
     </section>
@@ -218,30 +222,36 @@ const useCases = [
   {
     icon: '\u{2695}',
     title: 'Cirrhosis Prediction',
-    description: 'Predict liver cirrhosis from gut microbiome composition using metagenomic species abundance profiles.',
-    stats: { AUC: '0.94', features: 'k=8', samples: '232' },
-    reference: 'Qin et al., Nature 2014',
+    description: 'Predict liver cirrhosis from gut microbiome composition using 1,980 metagenomic species profiles in a Chinese cohort of 210 subjects.',
+    stats: { AUC: '0.94', features: 'k=8', samples: '210' },
+    reference: 'Qin N, Yang F, Li A, Prifti E, et al. Nature 2014;513:59-64',
+    doi: 'https://doi.org/10.1038/nature13568',
+    demo: true,
   },
   {
     icon: '\u{2684}',
     title: 'Cancer Classification',
     description: 'Classify colorectal cancer status from stool metagenomic data using sparse ternary models.',
     stats: { AUC: '0.92', features: 'k=12', samples: '156' },
-    reference: 'Zeller et al., Mol. Syst. Biol. 2014',
+    reference: 'Zeller G, et al. Mol. Syst. Biol. 2014;10(11):766',
+    doi: 'https://doi.org/10.15252/msb.20145645',
   },
   {
     icon: '\u{2318}',
     title: 'ICI Response Prediction',
-    description: 'Predict immune checkpoint inhibitor response (OS12) from baseline gut microbiome in the NSAT cohort.',
+    description: 'Predict immune checkpoint inhibitor response (OS12) from baseline gut microbiome in the NSAT multi-cancer cohort of 417 patients.',
     stats: { AUC: '0.87', features: 'k=71', samples: '417' },
-    reference: 'Derosa et al., 2025',
+    reference: 'Derosa L, Iebba V, et al. Cell 2024;187(13):3373-3389',
+    doi: 'https://doi.org/10.1016/j.cell.2024.05.029',
+    demo: true,
   },
   {
     icon: '\u{2623}',
     title: 'Metabolic Disease',
-    description: 'Identify type 2 diabetes biomarkers from metagenome-wide association studies.',
+    description: 'Identify type 2 diabetes biomarkers from metagenome-wide association studies of European and Chinese cohorts.',
     stats: { AUC: '0.89', features: 'k=10', samples: '345' },
-    reference: 'Karlsson et al., Nature 2013',
+    reference: 'Karlsson FH, et al. Nature 2013;498:99-103',
+    doi: 'https://doi.org/10.1038/nature12198',
   },
 ]
 
@@ -846,6 +856,30 @@ onMounted(async () => {
   font-size: 0.72rem;
   color: var(--text-faint);
   font-style: italic;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.case-ref a {
+  color: var(--text-faint);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.case-ref a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.demo-badge {
+  font-style: normal;
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--accent);
+  color: #fff;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  flex-shrink: 0;
 }
 
 /* ================================================================
