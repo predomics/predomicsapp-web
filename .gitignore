@@ -40,6 +40,7 @@ backend/data/
 .coverage
 htmlcov/
 .pytest_cache/
+test-results/
 
 # Backups & SSL (runtime)
 backups/
@@ -47,3 +48,6 @@ certbot/
 
 # Misc artifacts
 .project_planning.md
+
+# Other
+private/
