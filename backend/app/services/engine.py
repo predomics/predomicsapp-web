@@ -175,8 +175,20 @@ def write_param_yaml(
         "max_total_memory_mb": 256, "max_buffer_size_mb": 128,
     })
 
+    # Sklearn algorithm params (only included if algo is sklearn-based)
+    sklearn_algos = {"rf", "svm", "logistic", "xgboost", "lightgbm", "extra_trees", "adaboost", "knn"}
+    sklearn_sections = {}
+    if general.get("algo") in sklearn_algos:
+        algo_key = general["algo"]
+        algo_cfg = config.get(algo_key, {})
+        if isinstance(algo_cfg, dict):
+            sklearn_sections[algo_key] = {k: v for k, v in algo_cfg.items() if v is not None}
+        else:
+            sklearn_sections[algo_key] = {k: v for k, v in algo_cfg.__dict__.items() if v is not None}
+
     param = {
         "general": general,
+        **sklearn_sections,
         "data": {
             "X": x_path,
             "y": y_path,

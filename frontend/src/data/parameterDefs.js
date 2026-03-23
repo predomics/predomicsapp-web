@@ -12,10 +12,18 @@ export const CATEGORIES = [
   { id: 'ga', label: 'Genetic Algorithm', colorVar: '--cat-ga', algoFilter: 'ga' },
   { id: 'beam', label: 'Beam Search', colorVar: '--cat-beam', algoFilter: 'beam' },
   { id: 'mcmc', label: 'MCMC', colorVar: '--cat-mcmc', algoFilter: 'mcmc' },
+  { id: 'rf', label: 'Random Forest', colorVar: '--cat-rf', algoFilter: 'rf' },
+  { id: 'svm', label: 'SVM', colorVar: '--cat-svm', algoFilter: 'svm' },
+  { id: 'logistic', label: 'Logistic Regression', colorVar: '--cat-logistic', algoFilter: 'logistic' },
+  { id: 'xgboost', label: 'XGBoost', colorVar: '--cat-xgboost', algoFilter: 'xgboost' },
+  { id: 'lightgbm', label: 'LightGBM', colorVar: '--cat-lightgbm', algoFilter: 'lightgbm' },
+  { id: 'extra_trees', label: 'Extra Trees', colorVar: '--cat-extra_trees', algoFilter: 'extra_trees' },
+  { id: 'adaboost', label: 'AdaBoost', colorVar: '--cat-adaboost', algoFilter: 'adaboost' },
+  { id: 'knn', label: 'KNN', colorVar: '--cat-knn', algoFilter: 'knn' },
   { id: 'cv', label: 'Cross-Validation', colorVar: '--cat-cv', enabledBy: 'general.cv' },
-  { id: 'importance', label: 'Feature Importance', colorVar: '--cat-importance' },
-  { id: 'voting', label: 'Voting Ensemble', colorVar: '--cat-voting' },
-  { id: 'gpu', label: 'GPU Settings', colorVar: '--cat-gpu', enabledBy: 'general.gpu' },
+  { id: 'importance', label: 'Feature Importance', colorVar: '--cat-importance', gpredomicsOnly: true },
+  { id: 'voting', label: 'Voting Ensemble', colorVar: '--cat-voting', gpredomicsOnly: true },
+  { id: 'gpu', label: 'GPU Settings', colorVar: '--cat-gpu', enabledBy: 'general.gpu', gpredomicsOnly: true },
 ]
 
 export const PARAM_DEFS = [
@@ -23,7 +31,12 @@ export const PARAM_DEFS = [
   {
     key: 'algo', label: 'Algorithm', category: 'general', level: 'basic', inputType: 'select', defaultValue: 'ga',
     description: 'Optimization algorithm: GA (Genetic Algorithm), Beam (Beam Search), or MCMC (Markov Chain Monte Carlo).',
-    options: [{ value: 'ga', label: 'Genetic Algorithm' }, { value: 'beam', label: 'Beam Search' }, { value: 'mcmc', label: 'MCMC' }],
+    options: [
+      { value: 'ga', label: 'Genetic Algorithm' }, { value: 'beam', label: 'Beam Search' }, { value: 'mcmc', label: 'MCMC' },
+      { value: 'rf', label: 'Random Forest' }, { value: 'svm', label: 'SVM' }, { value: 'logistic', label: 'Logistic Regression' },
+      { value: 'xgboost', label: 'XGBoost' }, { value: 'lightgbm', label: 'LightGBM' }, { value: 'extra_trees', label: 'Extra Trees' },
+      { value: 'adaboost', label: 'AdaBoost' }, { value: 'knn', label: 'KNN' },
+    ],
   },
   {
     key: 'fit', label: 'Fit function', category: 'general', level: 'basic', inputType: 'select', defaultValue: 'auc',
@@ -225,6 +238,105 @@ export const PARAM_DEFS = [
   {
     key: 'nmin', label: 'nmin', category: 'mcmc', level: 'basic', inputType: 'number', defaultValue: 10,
     description: 'Minimum features in a model after feature elimination. 0 = keep all features (disable SBS).', min: 0, step: 1,
+  },
+
+  // ===================== RF (3) =====================
+  {
+    key: 'n_estimators', label: 'Number of trees', category: 'rf', level: 'basic', inputType: 'number', defaultValue: 100,
+    description: 'Number of decision trees in the forest. More trees = better performance but slower.', min: 10, step: 50,
+  },
+  {
+    key: 'max_depth', label: 'Max depth', category: 'rf', level: 'basic', inputType: 'number', defaultValue: null,
+    description: 'Maximum tree depth. null = unlimited (trees grow until pure leaves).', min: 1, step: 1,
+  },
+  {
+    key: 'min_samples_split', label: 'Min samples split', category: 'rf', level: 'advanced', inputType: 'number', defaultValue: 2,
+    description: 'Minimum samples required to split an internal node.', min: 2, step: 1,
+  },
+
+  // ===================== SVM (2) =====================
+  {
+    key: 'kernel', label: 'Kernel', category: 'svm', level: 'basic', inputType: 'select', defaultValue: 'linear',
+    description: 'Kernel function. Linear is interpretable; RBF captures non-linearities.',
+    options: [{ value: 'linear', label: 'Linear' }, { value: 'rbf', label: 'RBF' }, { value: 'poly', label: 'Polynomial' }],
+  },
+  {
+    key: 'C', label: 'Regularization (C)', category: 'svm', level: 'basic', inputType: 'number', defaultValue: 1.0,
+    description: 'Inverse regularization strength. Smaller = more regularization.', min: 0.001, step: 0.1,
+  },
+
+  // ===================== LOGISTIC (3) =====================
+  {
+    key: 'penalty', label: 'Penalty', category: 'logistic', level: 'basic', inputType: 'select', defaultValue: 'l1',
+    description: 'Regularization type. L1 produces sparse models (feature selection), L2 shrinks coefficients.',
+    options: [{ value: 'l1', label: 'L1 (Lasso)' }, { value: 'l2', label: 'L2 (Ridge)' }, { value: 'elasticnet', label: 'Elastic Net' }],
+  },
+  {
+    key: 'C', label: 'Regularization (C)', category: 'logistic', level: 'basic', inputType: 'number', defaultValue: 1.0,
+    description: 'Inverse regularization strength. Smaller = more regularization.', min: 0.001, step: 0.1,
+  },
+  {
+    key: 'l1_ratio', label: 'L1 ratio', category: 'logistic', level: 'advanced', inputType: 'number', defaultValue: 0.5,
+    description: 'Elastic Net mixing (0=L2, 1=L1). Only used with Elastic Net penalty.', min: 0, max: 1, step: 0.1,
+  },
+
+  // ===================== XGBOOST (3) =====================
+  {
+    key: 'n_estimators', label: 'Number of trees', category: 'xgboost', level: 'basic', inputType: 'number', defaultValue: 100,
+    description: 'Number of boosting rounds.', min: 10, step: 50,
+  },
+  {
+    key: 'max_depth', label: 'Max depth', category: 'xgboost', level: 'basic', inputType: 'number', defaultValue: 6,
+    description: 'Maximum tree depth. Controls model complexity.', min: 1, max: 20, step: 1,
+  },
+  {
+    key: 'learning_rate', label: 'Learning rate', category: 'xgboost', level: 'basic', inputType: 'number', defaultValue: 0.1,
+    description: 'Step size shrinkage to prevent overfitting.', min: 0.001, max: 1, step: 0.01,
+  },
+
+  // ===================== LIGHTGBM (3) =====================
+  {
+    key: 'n_estimators', label: 'Number of trees', category: 'lightgbm', level: 'basic', inputType: 'number', defaultValue: 100,
+    description: 'Number of boosting iterations.', min: 10, step: 50,
+  },
+  {
+    key: 'max_depth', label: 'Max depth', category: 'lightgbm', level: 'basic', inputType: 'number', defaultValue: -1,
+    description: 'Maximum tree depth. -1 = no limit.', min: -1, step: 1,
+  },
+  {
+    key: 'learning_rate', label: 'Learning rate', category: 'lightgbm', level: 'basic', inputType: 'number', defaultValue: 0.1,
+    description: 'Shrinkage rate.', min: 0.001, max: 1, step: 0.01,
+  },
+
+  // ===================== EXTRA TREES (2) =====================
+  {
+    key: 'n_estimators', label: 'Number of trees', category: 'extra_trees', level: 'basic', inputType: 'number', defaultValue: 100,
+    description: 'Number of extremely randomized trees.', min: 10, step: 50,
+  },
+  {
+    key: 'max_depth', label: 'Max depth', category: 'extra_trees', level: 'basic', inputType: 'number', defaultValue: null,
+    description: 'Maximum tree depth. null = unlimited.', min: 1, step: 1,
+  },
+
+  // ===================== ADABOOST (2) =====================
+  {
+    key: 'n_estimators', label: 'Number of estimators', category: 'adaboost', level: 'basic', inputType: 'number', defaultValue: 50,
+    description: 'Number of weak learners (decision stumps).', min: 10, step: 10,
+  },
+  {
+    key: 'learning_rate', label: 'Learning rate', category: 'adaboost', level: 'basic', inputType: 'number', defaultValue: 1.0,
+    description: 'Weight applied to each classifier at each boosting iteration.', min: 0.01, max: 2, step: 0.1,
+  },
+
+  // ===================== KNN (2) =====================
+  {
+    key: 'n_neighbors', label: 'Number of neighbors', category: 'knn', level: 'basic', inputType: 'number', defaultValue: 5,
+    description: 'Number of nearest neighbors for classification.', min: 1, max: 50, step: 2,
+  },
+  {
+    key: 'weights', label: 'Weight function', category: 'knn', level: 'basic', inputType: 'select', defaultValue: 'uniform',
+    description: 'How to weight neighbor votes.',
+    options: [{ value: 'uniform', label: 'Uniform' }, { value: 'distance', label: 'Distance-weighted' }],
   },
 
   // ===================== CV (7) =====================

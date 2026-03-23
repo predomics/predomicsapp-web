@@ -48,7 +48,7 @@ RUN pip install --no-cache-dir /tmp/wheels/*.whl && rm -rf /tmp/wheels
 
 # Install Python backend dependencies
 COPY predomicsapp-web/backend/pyproject.toml backend/
-RUN pip install --no-cache-dir backend/
+RUN pip install --no-cache-dir "backend/[ml]"
 
 # Copy backend code
 COPY predomicsapp-web/backend/ backend/

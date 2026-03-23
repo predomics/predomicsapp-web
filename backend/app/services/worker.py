@@ -326,10 +326,33 @@ def _parse_importance_from_display(display_text):
     return items if items else None
 
 
+def _run_sklearn_worker(param_yaml: dict, results_path: str):
+    """Run a sklearn classifier and save results."""
+    from .sklearn_runner import run_sklearn
+
+    algo = param_yaml["general"]["algo"]
+    algo_params = param_yaml.get(algo, {})
+    results = run_sklearn(param_yaml, algo_params)
+
+    with open(results_path, "w") as f:
+        json.dump(results, f, indent=2, default=str)
+    print(f"[worker] Results saved to {results_path}", flush=True)
+
+
 def main():
     import time as _time
     param_path = sys.argv[1]
     results_path = sys.argv[2]
+
+    # Check if this is a sklearn algorithm
+    with open(param_path) as _f:
+        _param_yaml = yaml.safe_load(_f)
+    algo = _param_yaml.get("general", {}).get("algo", "ga")
+
+    from .sklearn_runner import is_sklearn_algo
+    if is_sklearn_algo(algo):
+        _run_sklearn_worker(_param_yaml, results_path)
+        return
 
     import gpredomicspy
 

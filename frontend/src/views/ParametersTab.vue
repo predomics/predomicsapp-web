@@ -160,7 +160,7 @@ onMounted(() => { fetchTemplates() })
 // Sweepable parameters definition
 const sweepableParams = [
   { key: 'general.seed', label: 'Seeds', placeholder: '42, 123, 456', help: 'Comma-separated seed values' },
-  { key: 'general.algo', label: 'Algorithms', placeholder: 'ga, beam, mcmc', help: 'Comma-separated algorithms' },
+  { key: 'general.algo', label: 'Algorithms', placeholder: 'ga, beam, rf, xgboost', help: 'Comma-separated algorithms' },
   { key: 'general.language', label: 'Languages', placeholder: 'bin; ter; bin,ter,ratio', help: 'Semicolon-separated language combos' },
   { key: 'general.data_type', label: 'Data types', placeholder: 'raw; prev; raw,prev', help: 'Semicolon-separated data type combos' },
   { key: 'ga.population_size', label: 'Population sizes', placeholder: '1000, 5000, 10000', help: 'Comma-separated values' },
@@ -202,27 +202,44 @@ const batchJobCount = computed(() => {
 
 // Split categories into left/right columns
 const leftCatIds = ['general', 'cv']
-const rightCatIds = ['ga', 'beam', 'mcmc', 'importance', 'voting', 'gpu']
+const rightCatIds = ['ga', 'beam', 'mcmc', 'rf', 'svm', 'logistic', 'xgboost', 'lightgbm', 'extra_trees', 'adaboost', 'knn', 'importance', 'voting', 'gpu']
 const leftCategories = computed(() => CATEGORIES.filter(c => leftCatIds.includes(c.id)))
 const rightCategories = computed(() => CATEGORIES.filter(c => rightCatIds.includes(c.id)))
 
-// Group params by category
+// Group params by category, filtering out hidden params
 const paramsByCategory = computed(() => {
   const map = {}
   for (const p of PARAM_DEFS) {
+    if (!isParamVisible(p)) continue
     if (!map[p.category]) map[p.category] = []
     map[p.category].push(p)
   }
   return map
 })
 
+// Sklearn algorithms (no gpredomics-specific options)
+const SKLEARN_ALGOS = new Set(['rf', 'svm', 'logistic', 'xgboost', 'lightgbm', 'extra_trees', 'adaboost', 'knn'])
+const isSklearn = computed(() => SKLEARN_ALGOS.has(cfg.general.algo))
+
+// General params hidden for sklearn algos (they don't apply)
+const GPREDOMICS_GENERAL_KEYS = new Set(['language', 'data_type', 'epsilon', 'k_penalty', 'fr_penalty', 'bias_penalty',
+  'threshold_ci_n_bootstrap', 'threshold_ci_penalty', 'threshold_ci_alpha', 'threshold_ci_frac_bootstrap',
+  'user_feature_penalties_weight', 'n_model_to_display', 'display_colorful', 'gpu'])
+
 // Visibility logic for conditional categories
 function isCategoryVisible(cat) {
+  if (cat.gpredomicsOnly && isSklearn.value) return false
   if (cat.algoFilter) return cfg.general.algo === cat.algoFilter
   if (cat.enabledBy) {
     const [section, key] = cat.enabledBy.split('.')
     return cfg[section]?.[key] === true
   }
+  return true
+}
+
+// Visibility logic for individual params (hide gpredomics-specific general params for sklearn)
+function isParamVisible(paramDef) {
+  if (isSklearn.value && paramDef.category === 'general' && GPREDOMICS_GENERAL_KEYS.has(paramDef.key)) return false
   return true
 }
 

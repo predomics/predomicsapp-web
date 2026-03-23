@@ -14,6 +14,14 @@ class Algorithm(str, Enum):
     ga = "ga"
     beam = "beam"
     mcmc = "mcmc"
+    rf = "rf"
+    svm = "svm"
+    logistic = "logistic"
+    xgboost = "xgboost"
+    lightgbm = "lightgbm"
+    extra_trees = "extra_trees"
+    adaboost = "adaboost"
+    knn = "knn"
 
 
 class FitFunction(str, Enum):
@@ -95,6 +103,51 @@ class McmcParams(BaseModel):
     nmin: int = 10
 
 
+class RfParams(BaseModel):
+    n_estimators: int = 100
+    max_depth: Optional[int] = None
+    min_samples_split: int = 2
+
+
+class SvmParams(BaseModel):
+    kernel: str = "linear"
+    C: float = 1.0
+
+
+class LogisticParams(BaseModel):
+    penalty: str = "l1"
+    C: float = 1.0
+    l1_ratio: Optional[float] = None
+    max_iter: int = 1000
+
+
+class XgboostParams(BaseModel):
+    n_estimators: int = 100
+    max_depth: int = 6
+    learning_rate: float = 0.1
+
+
+class LightgbmParams(BaseModel):
+    n_estimators: int = 100
+    max_depth: int = -1
+    learning_rate: float = 0.1
+
+
+class ExtraTreesParams(BaseModel):
+    n_estimators: int = 100
+    max_depth: Optional[int] = None
+
+
+class AdaboostParams(BaseModel):
+    n_estimators: int = 50
+    learning_rate: float = 1.0
+
+
+class KnnParams(BaseModel):
+    n_neighbors: int = 5
+    weights: str = "uniform"
+
+
 class DataConfig(BaseModel):
     features_in_rows: bool = True
     inverse_classes: bool = False
@@ -152,6 +205,14 @@ class RunConfig(BaseModel):
     ga: GaParams = GaParams()
     beam: BeamParams = BeamParams()
     mcmc: McmcParams = McmcParams()
+    rf: RfParams = RfParams()
+    svm: SvmParams = SvmParams()
+    logistic: LogisticParams = LogisticParams()
+    xgboost: XgboostParams = XgboostParams()
+    lightgbm: LightgbmParams = LightgbmParams()
+    extra_trees: ExtraTreesParams = ExtraTreesParams()
+    adaboost: AdaboostParams = AdaboostParams()
+    knn: KnnParams = KnnParams()
     data: DataConfig = DataConfig()
     cv: CvParams = CvParams()
     importance: ImportanceParams = ImportanceParams()

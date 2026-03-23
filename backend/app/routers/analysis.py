@@ -383,7 +383,7 @@ def _run_job(job_id: str, project_id: str, param_path: str, user_id: str = "") -
             return
 
         # Run worker subprocess — stream output line-by-line for live console
-        worker_module = "app.services.worker"
+        worker_module = "backend.app.services.worker"
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
 
@@ -391,7 +391,7 @@ def _run_job(job_id: str, project_id: str, param_path: str, user_id: str = "") -
             [sys.executable, "-u", "-m", worker_module, param_path, str(results_path)],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            cwd=str(Path(__file__).resolve().parents[2]),  # backend/
+            cwd=str(Path(__file__).resolve().parents[3]),  # /app/ (parent of backend/)
             env=env,
         )
 
