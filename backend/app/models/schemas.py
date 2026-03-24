@@ -99,8 +99,8 @@ class BeamParams(BaseModel):
 
 
 class McmcParams(BaseModel):
-    n_iter: int = 10000
-    n_burn: int = 5000
+    n_iter: int = 1000
+    n_burn: int = 500
     lambda_: float = Field(0.001, alias="lambda")
     nmin: int = 10
 

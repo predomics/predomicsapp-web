@@ -165,8 +165,8 @@ def write_param_yaml(
 
     mcmc = config.get("mcmc", {})
     mcmc_out = {
-        "n_iter": mcmc.get("n_iter", 10000),
-        "n_burn": mcmc.get("n_burn", 5000),
+        "n_iter": mcmc.get("n_iter", 1000),
+        "n_burn": mcmc.get("n_burn", 500),
         "lambda": mcmc.get("lambda_", mcmc.get("lambda", 0.001)),
         "nmin": mcmc.get("nmin", 10),
     }

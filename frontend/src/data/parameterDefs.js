@@ -133,7 +133,7 @@ export const PARAM_DEFS = [
 
   // ===================== GA (17) =====================
   {
-    key: 'population_size', label: 'Population size', category: 'ga', level: 'basic', inputType: 'number', defaultValue: 5000,
+    key: 'population_size', label: 'Population size', category: 'ga', level: 'basic', inputType: 'number', defaultValue: 500,
     description: 'Target number of models per generation. Actual count may be lower due to clone removal.', min: 10, step: 100,
   },
   {
@@ -221,17 +221,17 @@ export const PARAM_DEFS = [
     description: 'If <= 1: alpha for FBM CI (smaller = larger range). If > 1: top X% of best models to keep.', min: 0, step: 1,
   },
   {
-    key: 'max_nb_of_models', label: 'Max models', category: 'beam', level: 'basic', inputType: 'number', defaultValue: 10000,
+    key: 'max_nb_of_models', label: 'Max models', category: 'beam', level: 'basic', inputType: 'number', defaultValue: 1000,
     description: 'Limits features to keep at each epoch based on model count possibilities.', min: 100, step: 1000,
   },
 
   // ===================== MCMC (4) =====================
   {
-    key: 'n_iter', label: 'Iterations', category: 'mcmc', level: 'basic', inputType: 'number', defaultValue: 10000,
+    key: 'n_iter', label: 'Iterations', category: 'mcmc', level: 'basic', inputType: 'number', defaultValue: 1000,
     description: 'Total number of MCMC iterations.', min: 100, step: 1000,
   },
   {
-    key: 'n_burn', label: 'Burn-in', category: 'mcmc', level: 'basic', inputType: 'number', defaultValue: 5000,
+    key: 'n_burn', label: 'Burn-in', category: 'mcmc', level: 'basic', inputType: 'number', defaultValue: 500,
     description: 'Number of initial MCMC iterations to discard (typically the first half).', min: 0, step: 500,
   },
   {
@@ -253,7 +253,7 @@ export const PARAM_DEFS = [
     description: 'Temperature multiplier per iteration. Closer to 1.0 = slower cooling, more thorough search. 0.999 ≈ 7000 iterations to reach 0.001.', min: 0.9, max: 0.9999, step: 0.001,
   },
   {
-    key: 'max_iterations', label: 'Max iterations', category: 'sa', level: 'basic', inputType: 'number', defaultValue: 10000,
+    key: 'max_iterations', label: 'Max iterations', category: 'sa', level: 'basic', inputType: 'number', defaultValue: 1000,
     description: 'Maximum number of propose-accept/reject iterations.', min: 100, step: 1000,
   },
   {
