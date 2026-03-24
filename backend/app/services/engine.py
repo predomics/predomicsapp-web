@@ -171,6 +171,15 @@ def write_param_yaml(
         "nmin": mcmc.get("nmin", 10),
     }
 
+    aco = _merge("aco", {
+        "n_ants": 100, "max_iterations": 200, "min_iterations": 10,
+        "alpha": 1.0, "beta": 2.0, "rho": 0.1,
+        "tau_min": 0.01, "tau_max": 1.0, "elite_weight": 2.0,
+        "k_min": 1, "k_max": 200, "max_age_best_model": 10,
+    })
+    aco["kmin"] = aco.pop("k_min")
+    aco["kmax"] = aco.pop("k_max")
+
     gpu = _merge("gpu", {
         "fallback_to_cpu": True, "memory_policy": "Strict",
         "max_total_memory_mb": 256, "max_buffer_size_mb": 128,
@@ -210,6 +219,7 @@ def write_param_yaml(
         "ga": ga,
         "beam": beam_out,
         "mcmc": mcmc_out,
+        "aco": aco,
         "gpu": gpu,
     }
 

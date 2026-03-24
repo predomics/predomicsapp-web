@@ -12,6 +12,7 @@ export const CATEGORIES = [
   { id: 'ga', label: 'Genetic Algorithm', colorVar: '--cat-ga', algoFilter: 'ga' },
   { id: 'beam', label: 'Beam Search', colorVar: '--cat-beam', algoFilter: 'beam' },
   { id: 'mcmc', label: 'MCMC', colorVar: '--cat-mcmc', algoFilter: 'mcmc' },
+  { id: 'aco', label: 'Ant Colony Optimization', colorVar: '--cat-aco', algoFilter: 'aco' },
   { id: 'rf', label: 'Random Forest', colorVar: '--cat-rf', algoFilter: 'rf' },
   { id: 'svm', label: 'SVM', colorVar: '--cat-svm', algoFilter: 'svm' },
   { id: 'logistic', label: 'Logistic Regression', colorVar: '--cat-logistic', algoFilter: 'logistic' },
@@ -33,7 +34,7 @@ export const PARAM_DEFS = [
     key: 'algo', label: 'Algorithm', category: 'general', level: 'basic', inputType: 'select', defaultValue: 'ga',
     description: 'Optimization algorithm: GA (Genetic Algorithm), Beam (Beam Search), or MCMC (Markov Chain Monte Carlo).',
     options: [
-      { value: 'ga', label: 'Genetic Algorithm' }, { value: 'beam', label: 'Beam Search' }, { value: 'mcmc', label: 'MCMC' },
+      { value: 'ga', label: 'Genetic Algorithm' }, { value: 'beam', label: 'Beam Search' }, { value: 'mcmc', label: 'MCMC' }, { value: 'aco', label: 'Ant Colony Optimization' },
       { value: 'rf', label: 'Random Forest' }, { value: 'svm', label: 'SVM' }, { value: 'logistic', label: 'Logistic Regression' },
       { value: 'xgboost', label: 'XGBoost' }, { value: 'lightgbm', label: 'LightGBM' }, { value: 'extra_trees', label: 'Extra Trees' },
       { value: 'adaboost', label: 'AdaBoost' }, { value: 'knn', label: 'KNN' },
@@ -239,6 +240,48 @@ export const PARAM_DEFS = [
   {
     key: 'nmin', label: 'nmin', category: 'mcmc', level: 'basic', inputType: 'number', defaultValue: 10,
     description: 'Minimum features in a model after feature elimination. 0 = keep all features (disable SBS).', min: 0, step: 1,
+  },
+
+  // ===================== ACO (10) =====================
+  {
+    key: 'n_ants', label: 'Number of ants', category: 'aco', level: 'basic', inputType: 'number', defaultValue: 100,
+    description: 'Number of models constructed per iteration. More ants = better exploration but slower.', min: 10, step: 50,
+  },
+  {
+    key: 'max_iterations', label: 'Max iterations', category: 'aco', level: 'basic', inputType: 'number', defaultValue: 200,
+    description: 'Maximum number of ACO iterations.', min: 1, step: 10,
+  },
+  {
+    key: 'min_iterations', label: 'Min iterations', category: 'aco', level: 'basic', inputType: 'number', defaultValue: 10,
+    description: 'Minimum iterations before early stopping is allowed.', min: 1, step: 5,
+  },
+  {
+    key: 'max_age_best_model', label: 'Max age best model', category: 'aco', level: 'basic', inputType: 'number', defaultValue: 10,
+    description: 'Early stop if best model hasn\'t improved for this many iterations.', min: 1, step: 5,
+  },
+  {
+    key: 'k_min', label: 'k min', category: 'aco', level: 'basic', inputType: 'number', defaultValue: 1,
+    description: 'Minimum number of features per model.', min: 1, step: 1,
+  },
+  {
+    key: 'k_max', label: 'k max', category: 'aco', level: 'basic', inputType: 'number', defaultValue: 200,
+    description: 'Maximum number of features per model.', min: 1, step: 10,
+  },
+  {
+    key: 'alpha', label: 'Alpha (pheromone weight)', category: 'aco', level: 'advanced', inputType: 'number', defaultValue: 1.0,
+    description: 'Pheromone importance exponent. Higher = more exploitation (follow collective memory).', min: 0, max: 5, step: 0.1,
+  },
+  {
+    key: 'beta', label: 'Beta (heuristic weight)', category: 'aco', level: 'advanced', inputType: 'number', defaultValue: 2.0,
+    description: 'Heuristic (feature significance) importance exponent. Higher = more bias toward statistically significant features.', min: 0, max: 10, step: 0.5,
+  },
+  {
+    key: 'rho', label: 'Evaporation rate (ρ)', category: 'aco', level: 'advanced', inputType: 'number', defaultValue: 0.1,
+    description: 'Pheromone evaporation rate. Higher = faster forgetting, more exploration. Lower = longer memory, more exploitation.', min: 0.01, max: 0.5, step: 0.05,
+  },
+  {
+    key: 'elite_weight', label: 'Elite weight', category: 'aco', level: 'advanced', inputType: 'number', defaultValue: 2.0,
+    description: 'Extra pheromone deposit weight for the global-best ant. Controls how strongly the best-ever solution guides future ants.', min: 0, max: 10, step: 0.5,
   },
 
   // ===================== RF (3) =====================

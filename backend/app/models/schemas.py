@@ -14,6 +14,7 @@ class Algorithm(str, Enum):
     ga = "ga"
     beam = "beam"
     mcmc = "mcmc"
+    aco = "aco"
     rf = "rf"
     svm = "svm"
     logistic = "logistic"
@@ -101,6 +102,21 @@ class McmcParams(BaseModel):
     n_burn: int = 5000
     lambda_: float = Field(0.001, alias="lambda")
     nmin: int = 10
+
+
+class AcoParams(BaseModel):
+    n_ants: int = 100
+    max_iterations: int = 200
+    min_iterations: int = 10
+    alpha: float = 1.0
+    beta: float = 2.0
+    rho: float = 0.1
+    tau_min: float = 0.01
+    tau_max: float = 1.0
+    elite_weight: float = 2.0
+    k_min: int = 1
+    k_max: int = 200
+    max_age_best_model: int = 10
 
 
 class RfParams(BaseModel):
@@ -212,6 +228,7 @@ class RunConfig(BaseModel):
     ga: GaParams = GaParams()
     beam: BeamParams = BeamParams()
     mcmc: McmcParams = McmcParams()
+    aco: AcoParams = AcoParams()
     rf: RfParams = RfParams()
     svm: SvmParams = SvmParams()
     logistic: LogisticParams = LogisticParams()
