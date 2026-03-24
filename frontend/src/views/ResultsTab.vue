@@ -1030,17 +1030,52 @@
     <!-- PHEROMONE SUB-TAB (ACO only)                                 -->
     <!-- ============================================================ -->
     <div v-if="detail && subTab === 'pheromone' && pheromoneData" class="sub-content">
+      <!-- 1. Pheromone bar chart (final values) -->
       <section class="section">
-        <div class="section-title">Pheromone Heatmap — Feature Importance from Ant Colony</div>
-        <p class="info-text" style="margin-bottom: 12px;">
-          Pheromone values reflect how frequently and successfully each feature was used by ants.
-          Higher pheromone = feature consistently appears in good models.
-          Blue = positive coefficient, red = negative coefficient.
+        <div class="section-title">1. Final Pheromone — Feature Importance</div>
+        <p class="info-text" style="margin-bottom: 8px;">
+          Blue (right) = positive coefficient pheromone. Red (left) = negative. Higher = feature consistently used in good models.
         </p>
         <div class="pheromone-controls">
           <label>Top features: <input type="number" v-model.number="pheromoneTopN" min="5" max="200" step="5" style="width:60px" /></label>
         </div>
         <div ref="pheromoneChartEl" class="plotly-chart" style="min-height: 400px;"></div>
+      </section>
+
+      <!-- 2. Pheromone evolution timeline -->
+      <section class="section" v-if="fullResults?.pheromone_timeline">
+        <div class="section-title">2. Pheromone Evolution Timeline</div>
+        <p class="info-text" style="margin-bottom: 8px;">
+          How pheromone values evolve over iterations. Rows = top features, columns = iterations. Shows when features get discovered and which persist.
+        </p>
+        <div ref="pheromoneTimelineEl" class="plotly-chart" style="min-height: 400px;"></div>
+      </section>
+
+      <!-- 3. Convergence entropy curve -->
+      <section class="section" v-if="fullResults?.pheromone_timeline">
+        <div class="section-title">3. Colony Convergence (Entropy)</div>
+        <p class="info-text" style="margin-bottom: 8px;">
+          Shannon entropy of the pheromone distribution. High = diverse exploration (early). Low = colony has converged (late).
+        </p>
+        <div ref="entropyChartEl" class="plotly-chart" style="min-height: 300px;"></div>
+      </section>
+
+      <!-- 4. Feature co-selection network -->
+      <section class="section" v-if="fullResults?.feature_cooccurrence">
+        <div class="section-title">4. Feature Co-Selection Network</div>
+        <p class="info-text" style="margin-bottom: 8px;">
+          Which features tend to appear together in models. Thicker edges = more frequent co-occurrence. Clusters reveal feature modules.
+        </p>
+        <div ref="cooccurrenceChartEl" class="plotly-chart" style="min-height: 500px;"></div>
+      </section>
+
+      <!-- 5. Feature discovery timeline -->
+      <section class="section" v-if="fullResults?.feature_discovery">
+        <div class="section-title">5. Feature Discovery — First Appearance in Top Models</div>
+        <p class="info-text" style="margin-bottom: 8px;">
+          When each feature first appears in the top-ranked models. Earlier discovery = more consistently important.
+        </p>
+        <div ref="discoveryChartEl" class="plotly-chart" style="min-height: 400px;"></div>
       </section>
     </div>
 
@@ -1286,6 +1321,10 @@ const importanceData = ref(null)
 const pheromoneData = ref(null)
 const pheromoneTopN = ref(30)
 const pheromoneChartEl = ref(null)
+const pheromoneTimelineEl = ref(null)
+const entropyChartEl = ref(null)
+const cooccurrenceChartEl = ref(null)
+const discoveryChartEl = ref(null)
 const explorationChartEl = ref(null)
 const explorationGen = ref(-1) // -1 = all generations
 const hasExplorationData = computed(() => {
@@ -4267,6 +4306,184 @@ function renderPheromoneChart() {
   Plotly.react(pheromoneChartEl.value, traces, layout, { responsive: true })
 }
 
+function renderPheromoneTimeline() {
+  const timeline = fullResults.value?.pheromone_timeline
+  if (!timeline || !pheromoneTimelineEl.value) return
+  const Plotly = window.Plotly
+  if (!Plotly) return
+
+  const isDark = document.documentElement.classList.contains('dark')
+  const textColor = isDark ? '#ccc' : '#333'
+
+  // Build feature set from all snapshots
+  const featureSet = new Map()
+  for (const snap of timeline) {
+    for (const f of snap.top_features) {
+      if (!featureSet.has(f.feature)) featureSet.set(f.feature, featureSet.size)
+    }
+  }
+  const featureNames = [...featureSet.keys()].slice(0, 30)
+  const iterations = timeline.map(s => s.iteration)
+
+  // Build z matrix: features × iterations
+  const z = featureNames.map(fname => {
+    return iterations.map((_, i) => {
+      const snap = timeline[i]
+      const f = snap.top_features.find(t => t.feature === fname)
+      return f ? f.tau_pos + f.tau_neg : 0
+    })
+  })
+
+  Plotly.react(pheromoneTimelineEl.value, [{
+    type: 'heatmap',
+    z,
+    x: iterations,
+    y: featureNames,
+    colorscale: isDark ? 'Hot' : 'YlOrRd',
+    reversescale: true,
+    colorbar: { title: { text: 'τ total', font: { color: textColor } }, tickfont: { color: textColor } },
+    hovertemplate: '%{y}<br>Iteration %{x}: τ=%{z:.3f}<extra></extra>',
+  }], {
+    title: { text: 'Pheromone Evolution (top 30 features)', font: { color: textColor, size: 14 } },
+    xaxis: { title: { text: 'Iteration', font: { color: textColor } }, tickfont: { color: textColor } },
+    yaxis: { tickfont: { color: textColor, size: 9 }, automargin: true },
+    height: Math.max(400, featureNames.length * 18 + 80),
+    margin: { l: 200, r: 30, t: 40, b: 50 },
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+  }, { responsive: true })
+}
+
+function renderEntropyChart() {
+  const timeline = fullResults.value?.pheromone_timeline
+  if (!timeline || !entropyChartEl.value) return
+  const Plotly = window.Plotly
+  if (!Plotly) return
+
+  const isDark = document.documentElement.classList.contains('dark')
+  const textColor = isDark ? '#ccc' : '#333'
+
+  const iterations = timeline.map(s => s.iteration)
+  const entropy = timeline.map(s => s.entropy)
+
+  Plotly.react(entropyChartEl.value, [{
+    type: 'scatter',
+    mode: 'lines+markers',
+    x: iterations,
+    y: entropy,
+    marker: { size: 4, color: '#ff6b35' },
+    line: { color: '#ff6b35', width: 2 },
+    hovertemplate: 'Iteration %{x}: entropy=%{y:.4f}<extra></extra>',
+  }], {
+    title: { text: 'Pheromone Entropy (1=uniform, 0=converged)', font: { color: textColor, size: 14 } },
+    xaxis: { title: { text: 'Iteration', font: { color: textColor } }, tickfont: { color: textColor } },
+    yaxis: { title: { text: 'Entropy', font: { color: textColor } }, tickfont: { color: textColor }, range: [0, 1.05] },
+    height: 300,
+    margin: { l: 60, r: 30, t: 40, b: 50 },
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+  }, { responsive: true })
+}
+
+function renderCooccurrenceChart() {
+  const cooc = fullResults.value?.feature_cooccurrence
+  if (!cooc || !cooccurrenceChartEl.value) return
+  const Plotly = window.Plotly
+  if (!Plotly) return
+
+  const isDark = document.documentElement.classList.contains('dark')
+  const textColor = isDark ? '#ccc' : '#333'
+
+  // Build adjacency for force-directed layout approximation
+  const nodes = new Map()
+  const maxCount = Math.max(...cooc.map(e => e.count))
+
+  for (const e of cooc.slice(0, 100)) {
+    if (!nodes.has(e.feature_a)) nodes.set(e.feature_a, { x: Math.random(), y: Math.random() })
+    if (!nodes.has(e.feature_b)) nodes.set(e.feature_b, { x: Math.random(), y: Math.random() })
+  }
+
+  // Simple circular layout
+  const nodeList = [...nodes.keys()]
+  const n = nodeList.length
+  nodeList.forEach((name, i) => {
+    nodes.get(name).x = Math.cos(2 * Math.PI * i / n)
+    nodes.get(name).y = Math.sin(2 * Math.PI * i / n)
+  })
+
+  // Edge traces (one per edge for width variation)
+  const edgeX = [], edgeY = []
+  for (const e of cooc.slice(0, 80)) {
+    const a = nodes.get(e.feature_a)
+    const b = nodes.get(e.feature_b)
+    if (a && b) {
+      edgeX.push(a.x, b.x, null)
+      edgeY.push(a.y, b.y, null)
+    }
+  }
+
+  const traces = [
+    {
+      type: 'scatter', mode: 'lines', x: edgeX, y: edgeY,
+      line: { color: isDark ? 'rgba(150,150,150,0.3)' : 'rgba(100,100,100,0.2)', width: 1 },
+      hoverinfo: 'skip', showlegend: false,
+    },
+    {
+      type: 'scatter', mode: 'markers+text', textposition: 'top center',
+      x: nodeList.map(n => nodes.get(n).x),
+      y: nodeList.map(n => nodes.get(n).y),
+      text: nodeList.map(n => n.length > 20 ? n.slice(0, 20) + '…' : n),
+      textfont: { size: 8, color: textColor },
+      marker: { size: 10, color: '#4285f4' },
+      hovertemplate: '%{text}<extra></extra>',
+      showlegend: false,
+    },
+  ]
+
+  Plotly.react(cooccurrenceChartEl.value, traces, {
+    title: { text: `Feature Co-Selection Network (${nodeList.length} features, ${Math.min(80, cooc.length)} edges)`, font: { color: textColor, size: 14 } },
+    xaxis: { visible: false },
+    yaxis: { visible: false },
+    height: 500,
+    margin: { l: 20, r: 20, t: 40, b: 20 },
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+  }, { responsive: true })
+}
+
+function renderDiscoveryChart() {
+  const discovery = fullResults.value?.feature_discovery
+  if (!discovery || !discoveryChartEl.value) return
+  const Plotly = window.Plotly
+  if (!Plotly) return
+
+  const isDark = document.documentElement.classList.contains('dark')
+  const textColor = isDark ? '#ccc' : '#333'
+
+  const top = discovery.slice(0, 30).reverse()
+  const features = top.map(d => d.feature)
+  const ranks = top.map(d => d.first_rank)
+
+  Plotly.react(discoveryChartEl.value, [{
+    type: 'bar',
+    orientation: 'h',
+    y: features,
+    x: ranks,
+    marker: {
+      color: ranks.map(r => r === 0 ? '#00c853' : r < 5 ? '#4285f4' : r < 20 ? '#ff9800' : '#f44336'),
+    },
+    hovertemplate: '%{y}: first in model rank #%{x}<extra></extra>',
+  }], {
+    title: { text: 'Feature Discovery — First Appearance in Top Models', font: { color: textColor, size: 14 } },
+    xaxis: { title: { text: 'First appears in model rank #', font: { color: textColor } }, tickfont: { color: textColor } },
+    yaxis: { tickfont: { color: textColor, size: 9 }, automargin: true },
+    height: Math.max(350, top.length * 20 + 80),
+    margin: { l: 200, r: 30, t: 40, b: 50 },
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+  }, { responsive: true })
+}
+
 async function renderActiveTab() {
   await ensurePlotly()
   if (subTab.value === 'summary') renderSummaryCharts()
@@ -4276,7 +4493,7 @@ async function renderActiveTab() {
   else if (subTab.value === 'comparative') renderComparativeCharts()
   else if (subTab.value === 'copresence') renderCoPresenceCharts()
   else if (subTab.value === 'exploration') renderExplorationChart()
-  else if (subTab.value === 'pheromone') renderPheromoneChart()
+  else if (subTab.value === 'pheromone') { renderPheromoneChart(); renderPheromoneTimeline(); renderEntropyChart(); renderCooccurrenceChart(); renderDiscoveryChart() }
   else if (subTab.value === 'basket') renderBasketCharts()
 }
 

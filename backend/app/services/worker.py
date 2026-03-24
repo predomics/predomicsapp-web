@@ -608,6 +608,67 @@ def main():
     except Exception as e:
         print(f"[worker] Pheromone extraction skipped: {e}", flush=True)
 
+    # Extract ACO pheromone timeline (if available)
+    try:
+        if experiment.has_pheromone():
+            timeline_data = experiment.get_pheromone_timeline()
+            results["pheromone_timeline"] = [
+                {
+                    "iteration": dict(snap)["iteration"],
+                    "entropy": round(dict(snap)["entropy"], 4),
+                    "top_features": [
+                        {"feature": name, "tau_pos": round(tp, 4), "tau_neg": round(tn, 4)}
+                        for name, tp, tn in dict(snap)["top_features"]
+                    ],
+                }
+                for snap in timeline_data
+            ]
+            print(f"[worker] Extracted pheromone timeline: {len(results['pheromone_timeline'])} snapshots", flush=True)
+    except Exception as e:
+        print(f"[worker] Pheromone timeline skipped: {e}", flush=True)
+
+    # Compute feature co-occurrence matrix from population
+    try:
+        if len(population_data) > 1:
+            from collections import Counter
+            cooccur = Counter()
+            for ind in population_data:
+                feats = sorted(ind.get("named_features", {}).keys())
+                for i in range(len(feats)):
+                    for j in range(i + 1, len(feats)):
+                        cooccur[(feats[i], feats[j])] += 1
+            # Keep top 200 pairs
+            top_pairs = cooccur.most_common(200)
+            if top_pairs:
+                results["feature_cooccurrence"] = [
+                    {"feature_a": a, "feature_b": b, "count": c}
+                    for (a, b), c in top_pairs
+                ]
+                print(f"[worker] Feature co-occurrence: {len(top_pairs)} pairs", flush=True)
+    except Exception as e:
+        print(f"[worker] Co-occurrence skipped: {e}", flush=True)
+
+    # Compute feature discovery timeline from generation tracking
+    try:
+        if generation_tracking:
+            discovery = {}  # feature_name -> first_generation
+            for g_entry in generation_tracking:
+                g = g_entry["generation"]
+                for k_val, _ in g_entry.get("k_fit_sample", []):
+                    pass  # k_fit_sample doesn't have feature names
+            # Use population data instead: track which features appear in top models
+            for rank, ind in enumerate(population_data[:50]):
+                for fname in ind.get("named_features", {}).keys():
+                    if fname not in discovery:
+                        discovery[fname] = {"first_rank": rank}
+            if discovery:
+                results["feature_discovery"] = [
+                    {"feature": f, "first_rank": d["first_rank"]}
+                    for f, d in sorted(discovery.items(), key=lambda x: x[1]["first_rank"])
+                ]
+    except Exception as e:
+        print(f"[worker] Feature discovery skipped: {e}", flush=True)
+
     # Save results first — display_results() may panic in Rust and kill the process
     with open(results_path, "w") as f:
         json.dump(results, f, indent=2, default=str)
