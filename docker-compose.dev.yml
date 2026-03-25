@@ -22,7 +22,7 @@ services:
   backend:
     build:
       context: ..
-      dockerfile: predomicsapp-web/Dockerfile
+      dockerfile: predomicsapp/Dockerfile
       target: runtime
     ports:
       - "8000:8000"

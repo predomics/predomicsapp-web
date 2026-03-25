@@ -436,9 +436,9 @@ Automated end-to-end testing using Playwright.
 Auto-deploy on tag push with container registry publishing.
 
 - `.github/workflows/release.yml` triggered on `v*` tags
-- Multi-repo checkout (predomicsapp-web, gpredomics, gpredomicspy)
+- Multi-repo checkout (predomicsapp, gpredomics, gpredomicspy)
 - Login to GHCR, build and push with `docker/build-push-action`
-- Tags: `ghcr.io/{owner}/predomicsapp-web:latest` + `:{version}`
+- Tags: `ghcr.io/{owner}/predomicsapp:latest` + `:{version}`
 - GitHub Actions cache (`type=gha`) for faster rebuilds
 - OCI metadata labels in Dockerfile (title, description, source, license)
 

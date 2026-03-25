@@ -130,7 +130,7 @@ Frontend at http://localhost:5173, API at http://localhost:8000.
 ## Project Structure
 
 ```
-predomicsapp-web/
+predomicsapp/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                # FastAPI app + DB migrations

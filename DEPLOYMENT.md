@@ -19,7 +19,7 @@
 ### Development
 
 ```bash
-git clone <repo-url> && cd predomics_suite/predomicsapp-web
+git clone <repo-url> && cd predomics_suite/predomicsapp
 docker compose up -d --build
 ```
 
@@ -30,7 +30,7 @@ The application will be available on port **8001**.
 A full production stack is provided with NGINX reverse proxy, Let's Encrypt SSL, resource limits, log rotation, and automated daily backups.
 
 ```bash
-cd predomicsapp-web
+cd predomicsapp
 
 # 1. Configure production environment
 cp .env.example .env
@@ -227,7 +227,7 @@ helm upgrade predomics ./helm/predomicsapp/ -f my-values.yaml
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `image.repository` | `ghcr.io/predomics/predomicsapp-web` | Container image |
+| `image.repository` | `ghcr.io/predomics/predomicsapp` | Container image |
 | `image.tag` | `latest` | Image tag |
 | `replicaCount` | `1` | Number of replicas |
 | `resources.limits.memory` | `4Gi` | Memory limit |
