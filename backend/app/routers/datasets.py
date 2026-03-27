@@ -69,6 +69,8 @@ def _infer_role(filename: str) -> Optional[str]:
         return "xtest"
     if name.startswith("ytest"):
         return "ytest"
+    if "metadata" in name or "meta" in name or "clinical" in name:
+        return "metadata"
     return None
 
 
