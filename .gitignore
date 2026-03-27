@@ -52,3 +52,4 @@ certbot/
 # Other
 private/data/datasets/
 data/scapis_network.json
+data/datasets/
