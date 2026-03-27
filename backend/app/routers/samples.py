@@ -38,6 +38,17 @@ SAMPLE_DATASETS = {
             {"filename": "Ytest.tsv", "features_in_rows": False},
         ],
     },
+    "wetlab_protocol": {
+        "name": "Wetlab Protocol (Lysis Effect)",
+        "description": "Paired study — 459 subjects, 2 extraction protocols (with/without mechanical lysis), 1,981 MSP features, 734 train + 184 test. Includes metadata (age, sex, BMI, Gram+/- counts, gene_count).",
+        "files": [
+            {"filename": "Xtrain.tsv", "features_in_rows": True},
+            {"filename": "Ytrain.tsv", "features_in_rows": False},
+            {"filename": "Xtest.tsv", "features_in_rows": True},
+            {"filename": "Ytest.tsv", "features_in_rows": False},
+            {"filename": "metadata.tsv", "features_in_rows": False},
+        ],
+    },
 }
 
 
