@@ -59,6 +59,7 @@ COPY --from=frontend-builder /app/frontend/dist backend/app/static/
 # Copy demo datasets
 COPY predomicsapp/data/qin2014_cirrhosis/ data/qin2014_cirrhosis/
 COPY predomicsapp/data/derosa2025_ici/ data/derosa2025_ici/
+COPY predomicsapp/data/wetlab_protocol/ data/wetlab_protocol/
 
 # Create directories for runtime data
 RUN mkdir -p data/uploads data/projects
