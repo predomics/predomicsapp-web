@@ -3,9 +3,9 @@
 # =============================================================================
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
-COPY predomicsapp-web/frontend/package*.json ./
+COPY predomicsapp/frontend/package*.json ./
 RUN npm ci
-COPY predomicsapp-web/frontend/ ./
+COPY predomicsapp/frontend/ ./
 RUN npm run build
 
 # =============================================================================
@@ -33,7 +33,7 @@ FROM python:3.11-slim AS runtime
 
 LABEL org.opencontainers.image.title="PredomicsApp" \
       org.opencontainers.image.description="Web application for gpredomics — sparse interpretable ML model discovery" \
-      org.opencontainers.image.source="https://github.com/predomics/predomicsapp-web" \
+      org.opencontainers.image.source="https://github.com/predomics/predomicsapp" \
       org.opencontainers.image.licenses="GPL-3.0"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -47,18 +47,18 @@ COPY --from=rust-builder /build/wheels/*.whl /tmp/wheels/
 RUN pip install --no-cache-dir /tmp/wheels/*.whl && rm -rf /tmp/wheels
 
 # Install Python backend dependencies
-COPY predomicsapp-web/backend/pyproject.toml backend/
+COPY predomicsapp/backend/pyproject.toml backend/
 RUN pip install --no-cache-dir "backend/[ml]"
 
 # Copy backend code
-COPY predomicsapp-web/backend/ backend/
+COPY predomicsapp/backend/ backend/
 
 # Copy built frontend into static directory
 COPY --from=frontend-builder /app/frontend/dist backend/app/static/
 
 # Copy demo datasets
-COPY predomicsapp-web/data/qin2014_cirrhosis/ data/qin2014_cirrhosis/
-COPY predomicsapp-web/data/derosa2025_ici/ data/derosa2025_ici/
+COPY predomicsapp/data/qin2014_cirrhosis/ data/qin2014_cirrhosis/
+COPY predomicsapp/data/derosa2025_ici/ data/derosa2025_ici/
 
 # Create directories for runtime data
 RUN mkdir -p data/uploads data/projects
