@@ -24,9 +24,12 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN pip install --no-cache-dir maturin
 
+ARG GPREDOMICS_REF=main
+ARG GPREDOMICSPY_REF=main
+
 WORKDIR /build
-COPY gpredomics/ ./gpredomics/
-COPY gpredomicspy/ ./gpredomicspy/
+RUN git clone --depth 1 --branch ${GPREDOMICS_REF} https://github.com/predomics/gpredomics.git && \
+    git clone --depth 1 --branch ${GPREDOMICSPY_REF} https://github.com/predomics/gpredomicspy.git
 RUN cd gpredomicspy && maturin build --release --out /build/wheels
 
 # =============================================================================
