@@ -2,10 +2,13 @@
 # Stage 1: Build Vue.js frontend
 # =============================================================================
 FROM node:20-alpine AS frontend-builder
+
+ARG APP_DIR=predomicsapp
+
 WORKDIR /app/frontend
-COPY predomicsapp/frontend/package*.json ./
+COPY ${APP_DIR}/frontend/package*.json ./
 RUN npm ci
-COPY predomicsapp/frontend/ ./
+COPY ${APP_DIR}/frontend/ ./
 RUN npm run build
 
 # =============================================================================
@@ -31,6 +34,8 @@ RUN cd gpredomicspy && maturin build --release --out /build/wheels
 # =============================================================================
 FROM python:3.11-slim AS runtime
 
+ARG APP_DIR=predomicsapp
+
 LABEL org.opencontainers.image.title="PredomicsApp" \
       org.opencontainers.image.description="Web application for gpredomics — sparse interpretable ML model discovery" \
       org.opencontainers.image.source="https://github.com/predomics/predomicsapp" \
@@ -47,17 +52,17 @@ COPY --from=rust-builder /build/wheels/*.whl /tmp/wheels/
 RUN pip install --no-cache-dir /tmp/wheels/*.whl && rm -rf /tmp/wheels
 
 # Install Python backend dependencies
-COPY predomicsapp/backend/pyproject.toml backend/
+COPY ${APP_DIR}/backend/pyproject.toml backend/
 RUN pip install --no-cache-dir "backend/[ml]"
 
 # Copy backend code
-COPY predomicsapp/backend/ backend/
+COPY ${APP_DIR}/backend/ backend/
 
 # Copy built frontend into static directory
 COPY --from=frontend-builder /app/frontend/dist backend/app/static/
 
-# Copy all demo datasets
-COPY predomicsapp/data/ data/
+# Copy demo datasets
+COPY ${APP_DIR}/data/ data/
 
 # Create directories for runtime data
 RUN mkdir -p data/uploads data/projects
