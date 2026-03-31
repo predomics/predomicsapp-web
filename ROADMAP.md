@@ -636,3 +636,108 @@ Curated, searchable database of published biomarker signatures for cross-study c
 - Compare mode: Plotly performance bars, Jaccard overlap matrix, common features, feature presence chart
 - Route `/signature-zoo` in router.js, navbar link in App.vue
 - 35 i18n keys in EN/FR
+
+---
+
+## Phase 6: gpredomics v1.0.0 Integration & Regression
+
+_Updated: 2026-03-31_
+
+### 50. Regression Support ✅ [gpredomics#15](https://github.com/predomics/gpredomics/issues/15), [gpredomics#79](https://github.com/predomics/gpredomics/issues/79)
+**Priority:** HIGH | **Effort:** High | **Status:** Done
+
+Data.y changed from Vec<u8> to Vec<f64>. 4 regression fitness functions (spearman, pearson, rmse, mutual_information). Regression-aware display, test metrics, CV fold splitting, voting skip.
+
+### 51. 4 New Optimization Algorithms ✅ [gpredomics#61](https://github.com/predomics/gpredomics/issues/61), [#62](https://github.com/predomics/gpredomics/issues/62), [#65](https://github.com/predomics/gpredomics/issues/65), [#54](https://github.com/predomics/gpredomics/issues/54)
+**Priority:** HIGH | **Effort:** High | **Status:** Done
+
+SA (Simulated Annealing), ILS (Iterated Local Search), LASSO/Elastic Net, ACO (Ant Colony Optimization). All integrated in web app.
+
+### 52. MCMC Gibbs Variable Selection ✅ [gpredomics#73](https://github.com/predomics/gpredomics/issues/73), [#70](https://github.com/predomics/gpredomics/issues/70)
+**Priority:** HIGH | **Effort:** High | **Status:** Done
+
+Joint feature+coefficient sampling replacing SBS. LASSO prescreen, parallel chains, golden section optimizer. MCMC from OOM/minutes to 5-11 seconds.
+
+### 53. Code Audit & Fixes ✅ [gpredomics#75](https://github.com/predomics/gpredomics/issues/75)
+**Priority:** HIGH | **Effort:** Medium | **Status:** Done
+
+12 critical + 14 medium issues fixed. HashMap→BTreeMap for determinism. ClassificationMetrics refactor. -280 lines dead code removed.
+
+### 54. Metadata Upload & Variable Selection ✅ [predomicsapp#1](https://github.com/predomics/predomicsapp/issues/1)
+**Priority:** HIGH | **Effort:** Medium | **Status:** Done
+
+Upload metadata TSV, select numeric column as regression y, auto-switch to regression mode. Backend APIs for metadata column parsing and y extraction.
+
+### 55. Feature Selection in UI ✅
+**Priority:** MEDIUM | **Effort:** Low | **Status:** Done
+
+Exposed prevalence, adj_pvalue, selection method in Parameters tab. Documented adaptive FDR relaxation.
+
+### 56. Adaptive BH-FDR ✅
+**Priority:** MEDIUM | **Effort:** Low | **Status:** Done
+
+When strict FDR selects < 10 features, alpha relaxes progressively (0.05→0.1→0.2→0.5) with warnings. Fallback to top 10 by raw p-value.
+
+### 57. Wetlab Protocol Dataset ✅ [gpredomics#60](https://github.com/predomics/gpredomics/issues/60)
+**Priority:** MEDIUM | **Effort:** Low | **Status:** Done
+
+Paired study (459 subjects, 2 extraction protocols). 1,981 MSPs. Subject-level train/test split. Metadata with age, sex, BMI, Gram+/- counts, gene_count.
+
+### 58. Samples/Data Separation ✅
+**Priority:** MEDIUM | **Effort:** Low | **Status:** Done
+
+Bundled demos in samples/ (baked in image). User workspace in data/ (persistent volume for K8s).
+
+### 59. Documentation ✅
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Done
+
+17-page PDF documentation. Vignette tutorial. All 7 algorithm docs with references. Fully documented param.yaml.
+
+---
+
+## Phase 7: Upcoming
+
+### 60. Multi-user Workspace Management [predomicsapp#4](https://github.com/predomics/predomicsapp/issues/4)
+**Priority:** HIGH | **Effort:** High | **Status:** Open
+
+Job concurrency limits (semaphore), per-user disk quotas, job timeouts, dataset deduplication, admin dashboard.
+
+### 61. Data Scanning Console Feedback [predomicsapp#5](https://github.com/predomics/predomicsapp/issues/5)
+**Priority:** MEDIUM | **Effort:** Low | **Status:** Open
+
+Show scanning progress during dataset load: feature count, class distribution, prevalence stats, warnings.
+
+### 62. Optuna Hyperparameter Optimization [gpredomics#77](https://github.com/predomics/gpredomics/issues/77)
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Open
+
+Bayesian hyperparameter tuning via Optuna in gpredomicspy. Search space for k_penalty, population_size, algorithm choice, etc.
+
+### 63. Multiclass Classification (OVO/OVA) [gpredomics#52](https://github.com/predomics/gpredomics/issues/52)
+**Priority:** HIGH | **Effort:** High | **Status:** Open
+
+One-vs-All and One-vs-One strategies for multi-class problems. Orchestrate K binary gpredomics runs.
+
+### 64. Clinical Data Integration [gpredomics#51](https://github.com/predomics/gpredomics/issues/51)
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Open
+
+Stacking, calibration, stratification of omics scores with clinical variables.
+
+### 65. MCMC SBS Fix [gpredomics#81](https://github.com/predomics/gpredomics/issues/81)
+**Priority:** MEDIUM | **Effort:** Medium | **Status:** Open
+
+SBS Bayesian evaluation produces inverted AUC after optimization changes.
+
+### 66. Auto-discover Feature Weights [gpredomics#78](https://github.com/predomics/gpredomics/issues/78)
+**Priority:** LOW | **Effort:** Medium | **Status:** Open
+
+Compare feature distributions between folds to auto-discover sampling weights.
+
+### 67. More Heuristics [gpredomics#63](https://github.com/predomics/gpredomics/issues/63), [#64](https://github.com/predomics/gpredomics/issues/64), [#66](https://github.com/predomics/gpredomics/issues/66)
+**Priority:** LOW | **Effort:** Medium | **Status:** Open
+
+PSO (Particle Swarm), EDA/UMDA, Bayesian Optimization.
+
+### 68. Island Model GA [gpredomics#33](https://github.com/predomics/gpredomics/issues/33)
+**Priority:** LOW | **Effort:** High | **Status:** Open
+
+Separate environments with periodic migration for diversity preservation.
