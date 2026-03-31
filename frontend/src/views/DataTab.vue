@@ -459,9 +459,9 @@ async function fetchMetadataColumns() {
   if (!md) { metadataColumns.value = []; return }
   try {
     const { data } = await axios.get(
-      `/api/projects/${projectId.value}/datasets/${md.datasetId}/files/${md.id}/columns`
+      `/api/datasets/${md.datasetId}/metadata-columns`
     )
-    metadataColumns.value = data.numeric_columns || []
+    metadataColumns.value = (data.columns || []).filter(c => c.type === "numeric").map(c => c.name)
   } catch {
     metadataColumns.value = []
   }
@@ -471,7 +471,7 @@ async function onYColumnSelected() {
   if (!selectedYColumn.value || !metadataDs.value) return
   try {
     await axios.post(
-      `/api/projects/${projectId.value}/datasets/${metadataDs.value.datasetId}/files/${metadataDs.value.id}/extract-y`,
+      `/api/datasets/${metadataDs.value.datasetId}/y-from-metadata`,
       { column: selectedYColumn.value }
     )
     await store.fetchOne(projectId.value)
