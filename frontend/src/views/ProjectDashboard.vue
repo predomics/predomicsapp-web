@@ -196,26 +196,32 @@ onMounted(() => {
   margin-bottom: 1rem;
   position: relative;
   z-index: 11;
+  background: var(--bg-card, #fff);
 }
 
 .tab {
   padding: 0.75rem 1.5rem;
   text-decoration: none;
   color: var(--text-muted);
-  font-weight: 500;
-  font-size: 0.9rem;
-  border-bottom: 2px solid transparent;
+  font-weight: 600;
+  font-size: 0.95rem;
+  border-bottom: 3px solid transparent;
   margin-bottom: -2px;
   transition: all 0.2s;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .tab:hover {
   color: var(--text-primary);
+  background: rgba(0, 0, 0, 0.03);
+  border-bottom-color: var(--border-light);
 }
 
 .tab.active {
-  color: var(--text-primary);
-  border-bottom-color: var(--accent);
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+  font-weight: 700;
 }
 
 .dashboard-body {
