@@ -4,6 +4,9 @@ on:
   push:
     tags: ['v*']
 
+env:
+  DOCKER_BUILDKIT: 1
+
 jobs:
   release:
     runs-on: ubuntu-latest
