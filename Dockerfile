@@ -3,12 +3,10 @@
 # =============================================================================
 FROM node:20-alpine AS frontend-builder
 
-ARG APP_DIR=predomicsapp
-
 WORKDIR /app/frontend
-COPY ${APP_DIR}/frontend/package*.json ./
+COPY frontend/package*.json ./
 RUN npm ci
-COPY ${APP_DIR}/frontend/ ./
+COPY frontend/ ./
 RUN npm run build
 
 # =============================================================================
@@ -37,8 +35,6 @@ RUN cd gpredomicspy && maturin build --release --out /build/wheels
 # =============================================================================
 FROM python:3.11-slim AS runtime
 
-ARG APP_DIR=predomicsapp
-
 LABEL org.opencontainers.image.title="PredomicsApp" \
       org.opencontainers.image.description="Web application for gpredomics — sparse interpretable ML model discovery" \
       org.opencontainers.image.source="https://github.com/predomics/predomicsapp" \
@@ -55,17 +51,17 @@ COPY --from=rust-builder /build/wheels/*.whl /tmp/wheels/
 RUN pip install --no-cache-dir /tmp/wheels/*.whl && rm -rf /tmp/wheels
 
 # Install Python backend dependencies
-COPY ${APP_DIR}/backend/pyproject.toml backend/
+COPY backend/pyproject.toml backend/
 RUN pip install --no-cache-dir "backend/[ml]"
 
 # Copy backend code
-COPY ${APP_DIR}/backend/ backend/
+COPY backend/ backend/
 
 # Copy built frontend into static directory
 COPY --from=frontend-builder /app/frontend/dist backend/app/static/
 
 # Copy bundled demo datasets (read-only, baked in image)
-COPY ${APP_DIR}/samples/ samples/
+COPY samples/ samples/
 
 # Create directories for user workspace (persistent volume mount point)
 RUN mkdir -p data/uploads data/projects data/datasets
