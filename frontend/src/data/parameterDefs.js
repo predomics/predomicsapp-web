@@ -72,6 +72,7 @@ export const PARAM_DEFS = [
       { value: 'raw', label: 'Raw' },
       { value: 'prev', label: 'Prevalence' },
       { value: 'log', label: 'Log' },
+      { value: 'zscore', label: 'Z-score (standardized)' },
     ],
   },
   {
