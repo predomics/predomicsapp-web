@@ -48,6 +48,8 @@ certbot/
 
 # Misc artifacts
 .project_planning.md
+Dockerfile
+README.md
 
 # Other
 private/data/datasets/
