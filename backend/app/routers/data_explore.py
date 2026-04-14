@@ -150,16 +150,20 @@ async def get_barcode_data(
     project_id: str,
     features: str = "",
     max_samples: int = 500,
+    transform: str = "raw",
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get raw feature values per sample for barcode heatmap (viewer access).
+    """Get feature values per sample for barcode heatmap (viewer access).
 
     Returns a matrix of shape (n_features, n_samples) with samples ordered by class.
     Pass feature names as comma-separated string, max 100.
+    Transform: raw (default), log, or zscore.
     """
     if not features:
         raise HTTPException(400, "No features specified")
+    if transform not in data_analysis.VALID_TRANSFORMS:
+        raise HTTPException(400, f"Invalid transform: {transform}")
 
     feature_list = [f.strip() for f in features.split(",") if f.strip()][:100]
     if not feature_list:
@@ -169,9 +173,42 @@ async def get_barcode_data(
     x_path, y_path = _resolve_train_files(project)
 
     barcode = data_analysis.compute_barcode_data(
-        x_path, y_path, feature_list, max_samples=max_samples
+        x_path, y_path, feature_list, max_samples=max_samples, transform=transform,
     )
     return barcode
+
+
+@router.get("/{project_id}/class-heatmap")
+async def get_class_heatmap(
+    project_id: str,
+    features: str = "",
+    transform: str = "zscore",
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compute features × class-mean heatmap (viewer access).
+
+    Returns a compact matrix of mean values per class for each feature.
+    Defaults to z-score transform, showing how each feature deviates from
+    the overall mean in each class — useful for spotting class-discriminative features.
+    Pass feature names as comma-separated string, max 100.
+    """
+    if not features:
+        raise HTTPException(400, "No features specified")
+    if transform not in data_analysis.VALID_TRANSFORMS:
+        raise HTTPException(400, f"Invalid transform: {transform}")
+
+    feature_list = [f.strip() for f in features.split(",") if f.strip()][:100]
+    if not feature_list:
+        raise HTTPException(400, "No valid features specified")
+
+    project, _ = await get_project_with_access(project_id, user, db, require_role="viewer")
+    x_path, y_path = _resolve_train_files(project)
+
+    result = data_analysis.compute_class_heatmap(
+        x_path, y_path, feature_list, transform=transform,
+    )
+    return result
 
 
 @router.get("/{project_id}/pcoa")

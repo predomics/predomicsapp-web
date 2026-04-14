@@ -630,6 +630,7 @@
     "prevalence": "Prevalence",
     "abundance": "Abundance",
     "barcode": "Barcode",
+    "classHeatmap": "Class heatmap",
     "volcano": "Volcano",
     "pcoa": "PCoA",
     "pcoaMetric": "Distance metric",

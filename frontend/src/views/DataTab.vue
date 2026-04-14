@@ -175,6 +175,7 @@
             <button :class="{ active: vizTab === 'prevalence' }" @click="vizTab = 'prevalence'">{{ $t('data.prevalence') }}</button>
             <button :class="{ active: vizTab === 'abundance' }" @click="vizTab = 'abundance'">{{ $t('data.abundance') }}</button>
             <button :class="{ active: vizTab === 'barcode' }" @click="vizTab = 'barcode'">{{ $t('data.barcode') }}</button>
+            <button :class="{ active: vizTab === 'classHeatmap' }" @click="vizTab = 'classHeatmap'">{{ $t('data.classHeatmap') }}</button>
             <button :class="{ active: vizTab === 'volcano' }" @click="vizTab = 'volcano'">{{ $t('data.volcano') }}</button>
             <button :class="{ active: vizTab === 'pcoa' }" @click="vizTab = 'pcoa'">{{ $t('data.pcoa') }}</button>
           </nav>
@@ -213,8 +214,34 @@
 
         <!-- Barcode heatmap -->
         <section class="section viz-section" v-if="vizTab === 'barcode'">
+          <div class="viz-controls">
+            <label class="toggle-label">
+              <span>{{ $t('data.transform') }}</span>
+              <select v-model="dataTransform" @change="loadBarcodeData">
+                <option value="raw">Raw</option>
+                <option value="log">Log</option>
+                <option value="zscore">Z-score</option>
+              </select>
+            </label>
+          </div>
           <div ref="barcodeChartEl" class="plotly-chart plotly-chart-tall"></div>
           <p v-if="!featureStats" class="info-text">Upload datasets and run filtering to see barcode.</p>
+        </section>
+
+        <!-- Class mean heatmap (features x classes) -->
+        <section class="section viz-section" v-if="vizTab === 'classHeatmap'">
+          <div class="viz-controls">
+            <label class="toggle-label">
+              <span>{{ $t('data.transform') }}</span>
+              <select v-model="dataTransform" @change="loadClassHeatmap">
+                <option value="raw">Raw</option>
+                <option value="log">Log</option>
+                <option value="zscore">Z-score</option>
+              </select>
+            </label>
+          </div>
+          <div ref="classHeatmapChartEl" class="plotly-chart plotly-chart-tall"></div>
+          <p v-if="!featureStats" class="info-text">Upload datasets and run filtering to see class heatmap.</p>
         </section>
 
         <!-- Volcano plot -->
@@ -332,6 +359,7 @@ const summary = ref(null)
 const featureStats = ref(null)
 const abundanceData = ref([])
 const barcodeData = ref(null)
+const classHeatmapData = ref(null)
 const mspAnnotations = ref({})
 const vizTab = ref('prevalence')
 const pcoaData = ref(null)
@@ -374,6 +402,7 @@ const selectedFeatures = ref([])
 const prevalenceChartEl = ref(null)
 const abundanceChartEl = ref(null)
 const barcodeChartEl = ref(null)
+const classHeatmapChartEl = ref(null)
 const volcanoChartEl = ref(null)
 const pcoaChartEl = ref(null)
 
@@ -663,11 +692,28 @@ async function loadBarcodeData() {
   if (feats.length === 0 || !hasTrainData.value) return
   try {
     const { data } = await axios.get(`/api/data-explore/${projectId.value}/barcode-data`, {
-      params: { features: feats.join(',') },
+      params: { features: feats.join(','), transform: dataTransform.value },
     })
     barcodeData.value = data
+    await nextTick()
+    renderBarcodeChart()
   } catch (e) {
     console.error('Failed to load barcode data:', e)
+  }
+}
+
+async function loadClassHeatmap() {
+  const feats = plotFeatureNames.value
+  if (feats.length === 0 || !hasTrainData.value) return
+  try {
+    const { data } = await axios.get(`/api/data-explore/${projectId.value}/class-heatmap`, {
+      params: { features: feats.join(','), transform: dataTransform.value },
+    })
+    classHeatmapData.value = data
+    await nextTick()
+    renderClassHeatmapChart()
+  } catch (e) {
+    console.error('Failed to load class heatmap:', e)
   }
 }
 
@@ -1270,11 +1316,57 @@ function renderCurrentViz() {
   if (vizTab.value === 'prevalence') renderPrevalenceChart()
   else if (vizTab.value === 'abundance') renderAbundanceChart()
   else if (vizTab.value === 'barcode') renderBarcodeChart()
+  else if (vizTab.value === 'classHeatmap') {
+    if (!classHeatmapData.value) loadClassHeatmap()
+    else renderClassHeatmapChart()
+  }
   else if (vizTab.value === 'volcano') renderVolcanoChart()
   else if (vizTab.value === 'pcoa') {
     if (!pcoaData.value && !loadingPcoa.value) loadPcoa()
     else renderPcoaChart()
   }
+}
+
+async function renderClassHeatmapChart() {
+  await nextTick()
+  if (!classHeatmapChartEl.value || !classHeatmapData.value || classHeatmapData.value.matrix.length === 0) return
+  const c = chartColors()
+  const d = classHeatmapData.value
+
+  // Symmetric divergent colorscale centered at 0 (z-score) or around mean (raw/log)
+  const flat = d.matrix.flat().filter(v => Number.isFinite(v))
+  let maxAbs = 0
+  if (flat.length > 0) {
+    maxAbs = Math.max(Math.abs(Math.min(...flat)), Math.abs(Math.max(...flat)))
+  }
+  if (maxAbs === 0) maxAbs = 1
+
+  const isZscore = d.transform === 'zscore'
+  const colorscale = isZscore
+    ? [[0, '#0000b8'], [0.25, '#4472ff'], [0.5, '#f8f8f8'], [0.75, '#ff6060'], [1, '#b80000']]
+    : [[0, '#f8f8f8'], [0.5, '#ffa500'], [1, '#b80000']]
+
+  const trace = {
+    z: d.matrix,  // (features x classes)
+    x: d.class_labels,
+    y: d.feature_names.map(featureLabel),
+    type: 'heatmap',
+    colorscale,
+    zmin: isZscore ? -maxAbs : Math.min(...flat),
+    zmax: isZscore ? maxAbs : Math.max(...flat),
+    zmid: isZscore ? 0 : undefined,
+    hovertemplate: 'Feature: %{y}<br>Class: %{x}<br>Value: %{z:.3f}<extra></extra>',
+    colorbar: { title: { text: d.transform }, thickness: 12 },
+  }
+
+  const layout = chartLayout({
+    title: `Class mean heatmap (${d.transform})`,
+    xaxis: { title: 'Class', side: 'bottom' },
+    yaxis: { title: 'Feature', autorange: 'reversed', tickfont: { size: 10 } },
+    margin: { l: 220, r: 40, t: 50, b: 60 },
+  })
+
+  Plotly.newPlot(classHeatmapChartEl.value, [trace], layout, { responsive: true, displayModeBar: true })
 }
 
 // Watchers for chart rendering

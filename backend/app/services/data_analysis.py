@@ -232,9 +232,11 @@ def compute_barcode_data(
     feature_names: list[str],
     features_in_rows: bool = True,
     max_samples: int = 500,
+    transform: str = "raw",
 ) -> dict[str, Any]:
-    """Compute barcode heatmap data: raw feature values per sample, ordered by class.
+    """Compute barcode heatmap data: feature values per sample, ordered by class.
 
+    Supports transforms: raw (default), log, zscore.
     Returns a matrix (features x samples) plus metadata for heatmap rendering.
     """
     feature_names = feature_names[:100]
@@ -282,8 +284,11 @@ def compute_barcode_data(
         cumulative += int((y_sorted == cls).sum())
         class_boundaries.append(cumulative)
 
-    # Build matrix (features x samples)
-    matrix = X_sorted[valid_features].T.values.tolist()
+    # Build matrix (features x samples), applying transform if requested
+    values = X_sorted[valid_features].values.astype(float)  # shape (samples, features)
+    if transform != "raw":
+        values = apply_transform(values, transform=transform)
+    matrix = values.T.tolist()  # transpose to (features, samples)
 
     return {
         "matrix": matrix,
@@ -292,6 +297,61 @@ def compute_barcode_data(
         "sample_classes": y_sorted.astype(int).tolist(),
         "class_labels": [str(int(c)) for c in class_labels],
         "class_boundaries": class_boundaries,
+        "transform": transform,
+    }
+
+
+def compute_class_heatmap(
+    x_path: str,
+    y_path: str,
+    feature_names: list[str],
+    features_in_rows: bool = True,
+    transform: str = "zscore",
+) -> dict[str, Any]:
+    """Compute a class-mean heatmap: features × classes, showing mean per class
+    (optionally z-score standardized first). Compact and readable for highlighting
+    class-discriminative features.
+    """
+    feature_names = feature_names[:100]
+
+    X = pd.read_csv(x_path, sep="\t", index_col=0)
+    y = pd.read_csv(y_path, sep="\t", index_col=0)
+
+    if features_in_rows:
+        X = X.T  # rows=samples, cols=features
+
+    y_series = y.iloc[:, 0]
+    common = X.index.intersection(y_series.index)
+    X = X.loc[common]
+    y_series = y_series.loc[common]
+
+    valid_features = [f for f in feature_names if f in X.columns]
+    if not valid_features:
+        return {"matrix": [], "feature_names": [], "class_labels": [], "transform": transform}
+
+    mat = X[valid_features].values.astype(float)  # (samples, features)
+    mat = np.nan_to_num(mat, nan=0.0)
+
+    # Apply transform (z-score is typical for this view, but raw/log also allowed)
+    if transform != "raw":
+        mat = apply_transform(mat, transform=transform)
+
+    class_labels = sorted(y_series.unique())
+    # Compute per-class mean: (n_classes, n_features)
+    means = np.zeros((len(class_labels), len(valid_features)))
+    for ci, cls in enumerate(class_labels):
+        mask = (y_series == cls).values
+        if mask.any():
+            means[ci] = np.nanmean(mat[mask], axis=0)
+
+    # Return as (features × classes) for display (rows=features)
+    matrix = means.T.tolist()
+
+    return {
+        "matrix": matrix,
+        "feature_names": valid_features,
+        "class_labels": [str(int(c)) for c in class_labels],
+        "transform": transform,
     }
 
 

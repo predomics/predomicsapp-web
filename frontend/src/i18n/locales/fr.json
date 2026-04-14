@@ -630,6 +630,7 @@
     "prevalence": "Prévalence",
     "abundance": "Abondance",
     "barcode": "Code-barres",
+    "classHeatmap": "Heatmap par classe",
     "volcano": "Volcano",
     "pcoa": "ACoP",
     "pcoaMetric": "Métrique de distance",
