@@ -284,14 +284,19 @@ def compute_barcode_data(
         cumulative += int((y_sorted == cls).sum())
         class_boundaries.append(cumulative)
 
-    # Build matrix (features x samples), applying transform if requested
-    values = X_sorted[valid_features].values.astype(float)  # shape (samples, features)
+    # Build matrix (features x samples), applying transform if requested.
+    # Also return a zero mask built from the raw values so the frontend can
+    # render raw zeros as "empty" regardless of how they map post-transform.
+    raw_values = X_sorted[valid_features].values.astype(float)  # (samples, features)
+    zero_mask = (raw_values == 0).T.tolist()  # (features, samples)
+    values = raw_values
     if transform != "raw":
         values = apply_transform(values, transform=transform)
     matrix = values.T.tolist()  # transpose to (features, samples)
 
     return {
         "matrix": matrix,
+        "zero_mask": zero_mask,
         "feature_names": valid_features,
         "sample_names": X_sorted.index.tolist(),
         "sample_classes": y_sorted.astype(int).tolist(),

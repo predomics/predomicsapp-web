@@ -1110,14 +1110,20 @@ async function renderBarcodeChart() {
     }
     colorbarTitle = 'Value (log\u2084)'
   } else {
-    // log or zscore: use the values directly
-    for (const row of d.matrix) for (const v of row) {
+    // log or zscore: use the values directly. Raw zeros are masked to null
+    // (renders as background) so "absent" cells stay visually empty regardless
+    // of where they land under the transform.
+    const mask = d.zero_mask || d.matrix.map(row => row.map(() => false))
+    z = d.matrix.map((row, ri) => row.map((v, si) => {
+      if (mask[ri] && mask[ri][si]) return null
+      return Number.isFinite(v) ? v : null
+    }))
+    for (const row of z) for (const v of row) {
       if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v }
     }
     if (!isFinite(lo)) lo = 0
     if (!isFinite(hi)) hi = 1
     floor = lo
-    z = d.matrix.map(row => row.map(v => Number.isFinite(v) ? v : lo))
 
     // Unified divergent blue/white/red colormap with 0 anchored at white.
     // For zscore, data straddles 0 so both halves are used. For log, values
