@@ -1019,10 +1019,33 @@ async function renderAbundanceChart() {
   const axisTitle = isTransformed
     ? (dataTransform.value === 'log' ? 'log(abundance)' : 'z-score')
     : (useLogAxis ? 'Abundance (log)' : 'Abundance')
+
+  // Compute explicit x-range across all class stats. Plotly's autorange is
+  // driven by trace data (here, only medians), not by layout shapes, so the
+  // viewport would snap to the medians and clip the whiskers — especially
+  // visible under the log transform where every median collapses to log(epsilon).
+  let xMin = Infinity, xMax = -Infinity
+  for (const f of features) {
+    for (const s of Object.values(f.classes)) {
+      if (Number.isFinite(s.min) && s.min < xMin) xMin = s.min
+      if (Number.isFinite(s.max) && s.max > xMax) xMax = s.max
+    }
+  }
+  let xRange
+  if (Number.isFinite(xMin) && Number.isFinite(xMax)) {
+    if (useLogAxis) {
+      xRange = [Math.log10(Math.max(xMin, 1e-12)), Math.log10(Math.max(xMax, 1e-12))]
+    } else {
+      const pad = (xMax - xMin) * 0.05 || 1
+      xRange = [xMin - pad, xMax + pad]
+    }
+  }
+
   Plotly.newPlot(abundanceChartEl.value, traces, chartLayout({
     xaxis: {
       title: { text: axisTitle, font: { color: c.text } },
       type: useLogAxis ? 'log' : 'linear',
+      range: xRange,
       gridcolor: c.grid, color: c.text,
     },
     yaxis: {
