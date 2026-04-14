@@ -1330,42 +1330,62 @@ function renderCurrentViz() {
 async function renderClassHeatmapChart() {
   await nextTick()
   if (!classHeatmapChartEl.value || !classHeatmapData.value || classHeatmapData.value.matrix.length === 0) return
-  const c = chartColors()
   const d = classHeatmapData.value
 
-  // Symmetric divergent colorscale centered at 0 (z-score) or around mean (raw/log)
-  const flat = d.matrix.flat().filter(v => Number.isFinite(v))
+  // Row-normalize: center each feature on its own mean across classes.
+  // This makes all three transforms (raw, log, zscore) visually meaningful by
+  // showing per-feature deviation from its own mean, with a divergent palette.
+  const matrix = d.matrix
+  const rowCentered = matrix.map(row => {
+    const valid = row.filter(v => Number.isFinite(v))
+    if (valid.length === 0) return row
+    const mean = valid.reduce((a, b) => a + b, 0) / valid.length
+    return row.map(v => Number.isFinite(v) ? v - mean : 0)
+  })
+
+  // Symmetric scale around 0 (the centered values)
   let maxAbs = 0
-  if (flat.length > 0) {
-    maxAbs = Math.max(Math.abs(Math.min(...flat)), Math.abs(Math.max(...flat)))
+  for (const row of rowCentered) {
+    for (const v of row) {
+      if (Number.isFinite(v) && Math.abs(v) > maxAbs) maxAbs = Math.abs(v)
+    }
   }
   if (maxAbs === 0) maxAbs = 1
 
-  const isZscore = d.transform === 'zscore'
-  const colorscale = isZscore
-    ? [[0, '#0000b8'], [0.25, '#4472ff'], [0.5, '#f8f8f8'], [0.75, '#ff6060'], [1, '#b80000']]
-    : [[0, '#f8f8f8'], [0.5, '#ffa500'], [1, '#b80000']]
+  // Divergent colorscale: blue (low) → white (mean) → red (high)
+  const colorscale = [
+    [0, '#0000b8'], [0.25, '#4472ff'], [0.5, '#f8f8f8'],
+    [0.75, '#ff6060'], [1, '#b80000'],
+  ]
+
+  // Custom hover: show original value + deviation
+  const customdata = matrix.map((row, i) =>
+    row.map((v, j) => [v, rowCentered[i][j]])
+  )
 
   const trace = {
-    z: d.matrix,  // (features x classes)
-    x: d.class_labels,
+    z: rowCentered,
+    x: d.class_labels.map(c => `Class ${c}`),
     y: d.feature_names.map(featureLabel),
     type: 'heatmap',
     colorscale,
-    zmin: isZscore ? -maxAbs : Math.min(...flat),
-    zmax: isZscore ? maxAbs : Math.max(...flat),
-    zmid: isZscore ? 0 : undefined,
-    hovertemplate: 'Feature: %{y}<br>Class: %{x}<br>Value: %{z:.3f}<extra></extra>',
-    colorbar: { title: { text: d.transform }, thickness: 12 },
+    zmin: -maxAbs,
+    zmax: maxAbs,
+    zmid: 0,
+    customdata,
+    hovertemplate: 'Feature: %{y}<br>Class: %{x}<br>Mean: %{customdata[0]:.4f}<br>Δ from row mean: %{customdata[1]:.4f}<extra></extra>',
+    colorbar: { title: { text: 'Δ ' + d.transform }, thickness: 12 },
   }
 
   const layout = chartLayout({
-    title: `Class mean heatmap (${d.transform})`,
+    title: `Class mean heatmap (${d.transform}) — row-centered`,
     xaxis: { title: 'Class', side: 'bottom' },
     yaxis: { title: 'Feature', autorange: 'reversed', tickfont: { size: 10 } },
     margin: { l: 220, r: 40, t: 50, b: 60 },
   })
 
+  // Force complete redraw to avoid Plotly cached state when transform changes
+  Plotly.purge(classHeatmapChartEl.value)
   Plotly.newPlot(classHeatmapChartEl.value, [trace], layout, { responsive: true, displayModeBar: true })
 }
 
