@@ -1120,11 +1120,16 @@ async function renderBarcodeChart() {
     z = d.matrix.map(row => row.map(v => Number.isFinite(v) ? v : lo))
 
     if (transform === 'zscore') {
-      // symmetric divergent scale around 0
-      const m = Math.max(Math.abs(lo), Math.abs(hi)) || 1
+      // Symmetric divergent scale around 0 (white). Use 95th percentile of
+      // |value| rather than absolute max so a few high outliers don't wash
+      // everything toward white.
+      const abs = []
+      for (const row of d.matrix) for (const v of row) if (Number.isFinite(v)) abs.push(Math.abs(v))
+      abs.sort((a, b) => a - b)
+      const m = (abs.length > 0 ? abs[Math.floor(abs.length * 0.95)] : 1) || 1
       lo = -m; hi = m; floor = lo
       colorscale = [
-        [0, '#0000b8'], [0.25, '#4472ff'], [0.5, '#f8f8f8'],
+        [0, '#0000b8'], [0.25, '#4472ff'], [0.5, '#ffffff'],
         [0.75, '#ff6060'], [1, '#b80000'],
       ]
       colorbarTitle = 'z-score'
@@ -1178,6 +1183,7 @@ async function renderBarcodeChart() {
       type: 'heatmap',
       colorscale,
       zmin: floor, zmax: hi,
+      ...(transform === 'zscore' ? { zmid: 0 } : {}),
       xaxis: xRef,
       yaxis: yRef,
       showscale: ci === nCls - 1,
