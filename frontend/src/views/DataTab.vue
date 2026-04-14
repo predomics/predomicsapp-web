@@ -1125,22 +1125,37 @@ async function renderBarcodeChart() {
     if (!isFinite(hi)) hi = 1
     floor = lo
 
-    // Unified divergent blue/white/red colormap with 0 anchored at white.
-    // For zscore, data straddles 0 so both halves are used. For log, values
-    // are typically negative (log of abundances below 1), so the heatmap
-    // sits on the blue side — which is semantically correct ("below 1").
-    // Clip extremes with 95th percentile of |value| so outliers don't wash
-    // everything toward white.
-    const abs = []
-    for (const row of d.matrix) for (const v of row) if (Number.isFinite(v)) abs.push(Math.abs(v))
-    abs.sort((a, b) => a - b)
-    const m = (abs.length > 0 ? abs[Math.floor(abs.length * 0.95)] : 1) || 1
-    lo = -m; hi = m; floor = lo
+    // Unified divergent blue/white/red colormap. zscore anchors white at 0
+    // (data-independent meaning: above/below the mean). log has no natural
+    // zero anchor — every value is negative — so stretch the colormap across
+    // the actual data range so both blue and red are used.
     colorscale = [
       [0, '#0000b8'], [0.25, '#4472ff'], [0.5, '#ffffff'],
       [0.75, '#ff6060'], [1, '#b80000'],
     ]
-    colorbarTitle = transform === 'zscore' ? 'z-score' : 'log(abundance)'
+    if (transform === 'zscore') {
+      // Symmetric around 0 using the 95th percentile of |value| so a few
+      // outliers don't wash the rest toward white.
+      const abs = []
+      for (const row of z) for (const v of row) if (Number.isFinite(v)) abs.push(Math.abs(v))
+      abs.sort((a, b) => a - b)
+      const m = (abs.length > 0 ? abs[Math.floor(abs.length * 0.95)] : 1) || 1
+      lo = -m; hi = m; floor = lo
+      colorbarTitle = 'z-score'
+    } else {
+      // log: use the actual (clipped) data range. Clip extremes with 5th/95th
+      // percentiles so a few outliers don't distort the scale.
+      const vals = []
+      for (const row of z) for (const v of row) if (Number.isFinite(v)) vals.push(v)
+      vals.sort((a, b) => a - b)
+      if (vals.length > 0) {
+        lo = vals[Math.floor(vals.length * 0.05)]
+        hi = vals[Math.floor(vals.length * 0.95)]
+      }
+      if (!(hi > lo)) { hi = lo + 1 }
+      floor = lo
+      colorbarTitle = 'log(abundance)'
+    }
   }
 
   // Split data by class for faceted panels
@@ -1183,7 +1198,7 @@ async function renderBarcodeChart() {
       type: 'heatmap',
       colorscale,
       zmin: floor, zmax: hi,
-      ...(transform !== 'raw' ? { zmid: 0 } : {}),
+      ...(transform === 'zscore' ? { zmid: 0 } : {}),
       xaxis: xRef,
       yaxis: yRef,
       showscale: ci === nCls - 1,
