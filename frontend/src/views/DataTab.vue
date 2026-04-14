@@ -1332,25 +1332,22 @@ async function renderClassHeatmapChart() {
   if (!classHeatmapChartEl.value || !classHeatmapData.value || classHeatmapData.value.matrix.length === 0) return
   const d = classHeatmapData.value
 
-  // Row-center: subtract per-feature mean so we show how each class deviates
-  // from that feature's overall average. This makes the visualization meaningful
-  // for all transforms (raw, log, zscore) — it reveals which class is higher/lower
-  // for each feature, regardless of absolute scale.
-  const rowCentered = d.matrix.map(row => {
+  // Row-normalize: center on per-feature mean, then scale by per-row max-abs so
+  // each row uses the full colorscale independently. Without per-row scaling,
+  // a single high-variance feature (e.g. on the log scale where most features
+  // are clipped near log(epsilon)) can swamp the global range and flatten all
+  // other rows to white. Per-row scaling guarantees every row is visible.
+  const rowNormalized = d.matrix.map(row => {
     const valid = row.filter(v => Number.isFinite(v))
-    if (valid.length === 0) return row
+    if (valid.length === 0) return row.map(() => 0)
     const mean = valid.reduce((a, b) => a + b, 0) / valid.length
-    return row.map(v => Number.isFinite(v) ? v - mean : 0)
+    const centered = row.map(v => Number.isFinite(v) ? v - mean : 0)
+    let rowMax = 0
+    for (const v of centered) if (Math.abs(v) > rowMax) rowMax = Math.abs(v)
+    if (rowMax === 0) return centered
+    return centered.map(v => v / rowMax)
   })
-
-  // Symmetric scale around 0
-  let maxAbs = 0
-  for (const row of rowCentered) {
-    for (const v of row) {
-      if (Number.isFinite(v) && Math.abs(v) > maxAbs) maxAbs = Math.abs(v)
-    }
-  }
-  if (maxAbs === 0) maxAbs = 1
+  const maxAbs = 1
 
   // Divergent colorscale: blue (below mean) → white (mean) → red (above mean)
   const colorscale = [
@@ -1358,13 +1355,13 @@ async function renderClassHeatmapChart() {
     [0.75, '#ff6060'], [1, '#b80000'],
   ]
 
-  // Hover: show original value + deviation
+  // Hover: show original value (in transform units) alongside the row-normalized display value
   const customdata = d.matrix.map((row, i) =>
-    row.map((v, j) => [v, rowCentered[i][j]])
+    row.map((v, j) => [v, rowNormalized[i][j]])
   )
 
   const trace = {
-    z: rowCentered,
+    z: rowNormalized,
     x: d.class_labels.map(cls => `Class ${cls}`),
     y: d.feature_names.map(featureLabel),
     type: 'heatmap',
@@ -1373,12 +1370,12 @@ async function renderClassHeatmapChart() {
     zmax: maxAbs,
     zmid: 0,
     customdata,
-    hovertemplate: 'Feature: %{y}<br>Class: %{x}<br>Value (' + d.transform + '): %{customdata[0]:.4f}<br>Δ from row mean: %{customdata[1]:.4f}<extra></extra>',
-    colorbar: { title: { text: 'Δ ' + d.transform }, thickness: 12 },
+    hovertemplate: 'Feature: %{y}<br>Class: %{x}<br>Value (' + d.transform + '): %{customdata[0]:.4g}<br>Row-normalized: %{customdata[1]:.2f}<extra></extra>',
+    colorbar: { title: { text: 'Row-norm' }, thickness: 12, tickvals: [-1, 0, 1], ticktext: ['low', 'mean', 'high'] },
   }
 
   const layout = chartLayout({
-    title: `Class mean heatmap (${d.transform}, row-centered)`,
+    title: `Class mean heatmap (${d.transform}, row-normalized)`,
     xaxis: { title: 'Class', side: 'bottom' },
     yaxis: { title: 'Feature', autorange: 'reversed', tickfont: { size: 10 } },
     margin: { l: 220, r: 40, t: 50, b: 60 },
