@@ -195,8 +195,8 @@
         <!-- Abundance by class -->
         <section class="section viz-section" v-if="vizTab === 'abundance'">
           <div class="viz-controls">
-            <label class="toggle-label">
-              <input type="checkbox" v-model="abundanceLogScale" @change="renderAbundanceChart()" />
+            <label class="toggle-label" :class="{ disabled: dataTransform !== 'raw' }">
+              <input type="checkbox" v-model="abundanceLogScale" @change="renderAbundanceChart()" :disabled="dataTransform !== 'raw'" />
               Log scale
             </label>
             <label class="toggle-label">
@@ -927,12 +927,16 @@ async function renderAbundanceChart() {
     // Hover trace for this class
     const hoverX = [], hoverY = [], hoverText = []
 
+    const isTransformed = dataTransform.value && dataTransform.value !== 'raw'
+    const useLogAxis = abundanceLogScale.value && !isTransformed
     for (let i = 0; i < nFeat; i++) {
       const rawStats = features[i].classes[cls]
       if (!rawStats) continue
-      // Replace zeros with a value slightly below the mean for log scale
+      // Zero-replacement is only meaningful for raw values on a log axis.
+      // When data is already log/zscore transformed, values may be negative
+      // and must be plotted directly on a linear axis.
       const logFloor = (rawStats.mean || 1e-6) / 10
-      const stats = abundanceLogScale.value
+      const stats = useLogAxis
         ? { ...rawStats, min: rawStats.min || logFloor, q1: rawStats.q1 || logFloor, median: rawStats.median || logFloor, q3: rawStats.q3 || logFloor, max: rawStats.max || logFloor }
         : rawStats
       const yC = i + offsets[ci]
@@ -1010,10 +1014,15 @@ async function renderAbundanceChart() {
     }
   }
 
+  const isTransformed = dataTransform.value && dataTransform.value !== 'raw'
+  const useLogAxis = abundanceLogScale.value && !isTransformed
+  const axisTitle = isTransformed
+    ? (dataTransform.value === 'log' ? 'log(abundance)' : 'z-score')
+    : (useLogAxis ? 'Abundance (log)' : 'Abundance')
   Plotly.newPlot(abundanceChartEl.value, traces, chartLayout({
     xaxis: {
-      title: { text: abundanceLogScale.value ? 'Abundance (log)' : 'Abundance', font: { color: c.text } },
-      type: abundanceLogScale.value ? 'log' : 'linear',
+      title: { text: axisTitle, font: { color: c.text } },
+      type: useLogAxis ? 'log' : 'linear',
       gridcolor: c.grid, color: c.text,
     },
     yaxis: {
