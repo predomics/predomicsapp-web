@@ -1332,18 +1332,18 @@ async function renderClassHeatmapChart() {
   if (!classHeatmapChartEl.value || !classHeatmapData.value || classHeatmapData.value.matrix.length === 0) return
   const d = classHeatmapData.value
 
-  // Row-normalize: center each feature on its own mean across classes.
-  // This makes all three transforms (raw, log, zscore) visually meaningful by
-  // showing per-feature deviation from its own mean, with a divergent palette.
-  const matrix = d.matrix
-  const rowCentered = matrix.map(row => {
+  // Row-center: subtract per-feature mean so we show how each class deviates
+  // from that feature's overall average. This makes the visualization meaningful
+  // for all transforms (raw, log, zscore) — it reveals which class is higher/lower
+  // for each feature, regardless of absolute scale.
+  const rowCentered = d.matrix.map(row => {
     const valid = row.filter(v => Number.isFinite(v))
     if (valid.length === 0) return row
     const mean = valid.reduce((a, b) => a + b, 0) / valid.length
     return row.map(v => Number.isFinite(v) ? v - mean : 0)
   })
 
-  // Symmetric scale around 0 (the centered values)
+  // Symmetric scale around 0
   let maxAbs = 0
   for (const row of rowCentered) {
     for (const v of row) {
@@ -1352,20 +1352,20 @@ async function renderClassHeatmapChart() {
   }
   if (maxAbs === 0) maxAbs = 1
 
-  // Divergent colorscale: blue (low) → white (mean) → red (high)
+  // Divergent colorscale: blue (below mean) → white (mean) → red (above mean)
   const colorscale = [
     [0, '#0000b8'], [0.25, '#4472ff'], [0.5, '#f8f8f8'],
     [0.75, '#ff6060'], [1, '#b80000'],
   ]
 
-  // Custom hover: show original value + deviation
-  const customdata = matrix.map((row, i) =>
+  // Hover: show original value + deviation
+  const customdata = d.matrix.map((row, i) =>
     row.map((v, j) => [v, rowCentered[i][j]])
   )
 
   const trace = {
     z: rowCentered,
-    x: d.class_labels.map(c => `Class ${c}`),
+    x: d.class_labels.map(cls => `Class ${cls}`),
     y: d.feature_names.map(featureLabel),
     type: 'heatmap',
     colorscale,
@@ -1373,12 +1373,12 @@ async function renderClassHeatmapChart() {
     zmax: maxAbs,
     zmid: 0,
     customdata,
-    hovertemplate: 'Feature: %{y}<br>Class: %{x}<br>Mean: %{customdata[0]:.4f}<br>Δ from row mean: %{customdata[1]:.4f}<extra></extra>',
+    hovertemplate: 'Feature: %{y}<br>Class: %{x}<br>Value (' + d.transform + '): %{customdata[0]:.4f}<br>Δ from row mean: %{customdata[1]:.4f}<extra></extra>',
     colorbar: { title: { text: 'Δ ' + d.transform }, thickness: 12 },
   }
 
   const layout = chartLayout({
-    title: `Class mean heatmap (${d.transform}) — row-centered`,
+    title: `Class mean heatmap (${d.transform}, row-centered)`,
     xaxis: { title: 'Class', side: 'bottom' },
     yaxis: { title: 'Feature', autorange: 'reversed', tickfont: { size: 10 } },
     margin: { l: 220, r: 40, t: 50, b: 60 },
