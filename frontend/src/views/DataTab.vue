@@ -1119,28 +1119,22 @@ async function renderBarcodeChart() {
     floor = lo
     z = d.matrix.map(row => row.map(v => Number.isFinite(v) ? v : lo))
 
-    if (transform === 'zscore') {
-      // Symmetric divergent scale around 0 (white). Use 95th percentile of
-      // |value| rather than absolute max so a few high outliers don't wash
-      // everything toward white.
-      const abs = []
-      for (const row of d.matrix) for (const v of row) if (Number.isFinite(v)) abs.push(Math.abs(v))
-      abs.sort((a, b) => a - b)
-      const m = (abs.length > 0 ? abs[Math.floor(abs.length * 0.95)] : 1) || 1
-      lo = -m; hi = m; floor = lo
-      colorscale = [
-        [0, '#0000b8'], [0.25, '#4472ff'], [0.5, '#ffffff'],
-        [0.75, '#ff6060'], [1, '#b80000'],
-      ]
-      colorbarTitle = 'z-score'
-    } else {
-      // log: sequential viridis-like, using the raw log range
-      colorscale = [
-        [0, '#440154'], [0.25, '#3b528b'], [0.5, '#21918c'],
-        [0.75, '#5ec962'], [1, '#fde725'],
-      ]
-      colorbarTitle = 'log(abundance)'
-    }
+    // Unified divergent blue/white/red colormap with 0 anchored at white.
+    // For zscore, data straddles 0 so both halves are used. For log, values
+    // are typically negative (log of abundances below 1), so the heatmap
+    // sits on the blue side — which is semantically correct ("below 1").
+    // Clip extremes with 95th percentile of |value| so outliers don't wash
+    // everything toward white.
+    const abs = []
+    for (const row of d.matrix) for (const v of row) if (Number.isFinite(v)) abs.push(Math.abs(v))
+    abs.sort((a, b) => a - b)
+    const m = (abs.length > 0 ? abs[Math.floor(abs.length * 0.95)] : 1) || 1
+    lo = -m; hi = m; floor = lo
+    colorscale = [
+      [0, '#0000b8'], [0.25, '#4472ff'], [0.5, '#ffffff'],
+      [0.75, '#ff6060'], [1, '#b80000'],
+    ]
+    colorbarTitle = transform === 'zscore' ? 'z-score' : 'log(abundance)'
   }
 
   // Split data by class for faceted panels
@@ -1183,7 +1177,7 @@ async function renderBarcodeChart() {
       type: 'heatmap',
       colorscale,
       zmin: floor, zmax: hi,
-      ...(transform === 'zscore' ? { zmid: 0 } : {}),
+      ...(transform !== 'raw' ? { zmid: 0 } : {}),
       xaxis: xRef,
       yaxis: yRef,
       showscale: ci === nCls - 1,
